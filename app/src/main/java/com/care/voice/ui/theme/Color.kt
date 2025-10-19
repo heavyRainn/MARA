@@ -2,10 +2,20 @@ package com.care.voice.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// База (бумага/чернила)
+val Paper    = Color(0xFFFFF6EA)   // тёплая «бумага»
+val Ink      = Color(0xFF2A2A2A)   // графит/чернила
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+// Акценты
+val Mulberry = Color(0xFFD26C8E)   // розово-вишнёвый (кнопки/акцент)
+val Fir      = Color(0xFF2E6B57)   // хвоя (второй акцент)
+val Sky      = Color(0xFF7FB6D6)   // спокойный синий
+
+// Поверхности/пузыри
+val BubbleUser       = Color(0xFFCCDDF6) // светлый «сине-бумажный»
+val BubbleAssistant  = Color(0xFFF2EDE6) // светлый «тёплый»
+val ChipHeader       = Color(0xFFE7D2A9) // плашки «лейблы»
+
+// Ошибки/состояния
+val ErrorRed         = Color(0xFFB3261E)
+val OnErrorOnPaper   = Color(0xFFFFEDEA)

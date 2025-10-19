@@ -1,7 +1,6 @@
 package com.care.voice.ui.components
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,22 +35,23 @@ fun UserBubble(
     if (text.isBlank()) return
 
     var menuExpanded by remember { mutableStateOf(false) }
-    var fontSize by remember { mutableStateOf(16.sp) }
+    var fontSize by remember { mutableStateOf(15.sp) }
     val clipboard = LocalClipboardManager.current
     val scroll = rememberScrollState()
 
     Row(Modifier.fillMaxWidth()) {
-        Spacer(Modifier.weight(1f)) // выравниваем пузырь вправо
+        Spacer(Modifier.weight(1f)) // выравниваем вправо
         Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 1.dp,
             modifier = Modifier
                 .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f) // немного уже, чтобы читалось как «свой»
-                .clip(RoundedCornerShape(18.dp))
+                .fillMaxWidth(0.92f)
+                .clip(RoundedCornerShape(16.dp))
         ) {
-            Column(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -63,10 +63,14 @@ fun UserBubble(
                                 "Пользователь" + if (isFirst) " • первая фраза" else "",
                                 style = MaterialTheme.typography.labelMedium
                             )
-                        }
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     )
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { menuExpanded = true }) {
+                    FilledTonalIconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Rounded.MoreVert, contentDescription = "Меню")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -74,10 +78,10 @@ fun UserBubble(
                             clipboard.setText(AnnotatedString(text)); menuExpanded = false
                         })
                         DropdownMenuItem(text = { Text("Крупнее") }, onClick = {
-                            fontSize = (fontSize.value + 2f).sp; menuExpanded = false
+                            fontSize = (fontSize.value + 1f).sp; menuExpanded = false
                         })
                         DropdownMenuItem(text = { Text("Мельче") }, onClick = {
-                            fontSize = maxOf(12f, fontSize.value - 2f).sp; menuExpanded = false
+                            fontSize = maxOf(12f, fontSize.value - 1f).sp; menuExpanded = false
                         })
                     }
                 }
@@ -107,47 +111,41 @@ fun AssistantBubble(
     text: String,
     isSpeaking: Boolean,
     onRepeatVoice: (() -> Unit)? = null,
-    onStopVoice: (() -> Unit)? = null
+    onStopVoice: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     if (text.isBlank()) return
 
     var menuExpanded by remember { mutableStateOf(false) }
-    var fontSize by remember { mutableStateOf(16.sp) }
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var fontSize by remember { mutableStateOf(15.sp) }
     val clipboard = LocalClipboardManager.current
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
 
-    val collapsedMax = 160.dp
-    val expandedMax  = 420.dp
-    val stopSlotWidth = 64.dp       // фиксированное место под кнопку «Стоп»
-
-    Row(Modifier.fillMaxWidth()) {
+    Row(modifier = modifier.fillMaxWidth()) {
         Surface(
-            tonalElevation = 2.dp,
+            tonalElevation = 1.dp,
             shadowElevation = 0.dp,
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.92f)
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(16.dp))
         ) {
-            Column(Modifier.padding(16.dp)) {
-
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                // ВАЖНО: НЕ растягиваем колонку на всю высоту
+            ) {
+                // ─── Шапка карточки ────────────────────────────────────────────────
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // слева — плашка «Ассистент»
                     AssistChip(
                         onClick = { /* no-op */ },
-                        label = {
-                            Text(
-                                "Ассистент",
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        },
+                        label = { Text("Ассистент", style = MaterialTheme.typography.labelMedium) },
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             labelColor = MaterialTheme.colorScheme.onSecondaryContainer
@@ -156,28 +154,24 @@ fun AssistantBubble(
 
                     Spacer(Modifier.weight(1f))
 
-                    // центр — зарезервированное место под кнопку «Стоп»
+                    // фиксированное место под кнопку «Стоп», чтобы верстка не прыгала
                     Box(
-                        modifier = Modifier.width(stopSlotWidth),
+                        modifier = Modifier.width(72.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         if (isSpeaking && onStopVoice != null) {
-                            TextButton(
+                            FilledTonalButton(
                                 onClick = onStopVoice,
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(10.dp)
                             ) { Text("Стоп") }
                         }
                     }
 
-                    // справа — меню
-                    IconButton(onClick = { menuExpanded = true }) {
+                    FilledTonalIconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Rounded.MoreVert, contentDescription = "Меню")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(
-                            text = { Text(if (expanded) "Свернуть" else "Развернуть") },
-                            onClick = { expanded = !expanded; menuExpanded = false }
-                        )
                         DropdownMenuItem(text = { Text("Прокрутить вверх") }, onClick = {
                             scope.launch { scrollState.animateScrollTo(0) }; menuExpanded = false
                         })
@@ -188,10 +182,10 @@ fun AssistantBubble(
                             clipboard.setText(AnnotatedString(text)); menuExpanded = false
                         })
                         DropdownMenuItem(text = { Text("Крупнее") }, onClick = {
-                            fontSize = (fontSize.value + 2f).sp; menuExpanded = false
+                            fontSize = (fontSize.value + 1f).sp; menuExpanded = false
                         })
                         DropdownMenuItem(text = { Text("Мельче") }, onClick = {
-                            fontSize = maxOf(12f, fontSize.value - 2f).sp; menuExpanded = false
+                            fontSize = maxOf(12f, fontSize.value - 1f).sp; menuExpanded = false
                         })
                         if (onRepeatVoice != null) {
                             DropdownMenuItem(text = { Text("Повторить голосом") }, onClick = {
@@ -208,48 +202,23 @@ fun AssistantBubble(
 
                 Spacer(Modifier.height(6.dp))
 
+                // ─── Контент: растем до доступной высоты, но не тянемся насильно ───
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = if (expanded) expandedMax else collapsedMax)
-                        .animateContentSize()
+                        .weight(1f, fill = false)   // 🔑 подгон по контенту; если много — ограничится доступной высотой
                         .verticalScroll(scrollState)
-                        .clickable { expanded = !expanded }
                 ) {
                     Text(
                         text = text,
                         fontSize = fontSize,
-                        lineHeight = (fontSize.value * 1.35f).sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = Int.MAX_VALUE,
-                        overflow = TextOverflow.Visible
+                        lineHeight = (fontSize.value * 1.33f).sp,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-
-                    // градиент-подсказка, когда есть что листать и блок свёрнут
-                    val canScrollDown = scrollState.value < scrollState.maxValue
-                    if (!expanded && canScrollDown) {
-                        Box(
-                            Modifier
-                                .matchParentSize()
-                                .drawWithContent {
-                                    drawContent()
-                                    val h = size.height
-                                    drawRect(
-                                        brush = Brush.verticalGradient(
-                                            0f to Color.Transparent,
-                                            0.7f to Color(0xAAFFFFFF),
-                                            1f to Color.White
-                                        ),
-                                        topLeft = Offset(0f, h - 120f),
-                                        size = Size(size.width, 120f),
-                                        alpha = 0.9f
-                                    )
-                                }
-                        )
-                    }
                 }
             }
         }
         Spacer(Modifier.weight(1f))
     }
 }
+

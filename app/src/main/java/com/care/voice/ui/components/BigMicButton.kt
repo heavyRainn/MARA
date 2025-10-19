@@ -1,12 +1,6 @@
 package com.care.voice.ui.components
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,16 +12,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -35,58 +28,64 @@ import androidx.compose.ui.unit.sp
 fun BigMicButton(
     active: Boolean,
     label: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val infinite = rememberInfiniteTransition(label = "pulse")
     val pulse by infinite.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.08f,
+        initialValue = 0.94f,
+        targetValue  = 1.06f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            animation = tween(900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulseAnim"
     )
     val scale by animateFloatAsState(
         targetValue = if (active) pulse else 1f,
-        animationSpec = tween(250),
+        animationSpec = tween(220),
         label = "scaleAnim"
     )
 
-    val gradient = remember(active) {
-        if (active) Brush.linearGradient(listOf(Color(0xFF6A11CB), Color(0xFF2575FC)))
-        else Brush.linearGradient(listOf(Color(0xFF2C5364), Color(0xFF203A43), Color(0xFF0F2027)))
-    }
+    val gradient = if (active)
+        Brush.radialGradient(
+            listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+        )
+    else
+        Brush.radialGradient(listOf(Color(0xFF2B4A52), Color(0xFF173940)))
 
     Box(
-        modifier = Modifier
-            .size(220.dp)
-            .scale(scale)
-            .shadow(if (active) 24.dp else 12.dp, CircleShape, clip = false)
+        modifier = modifier
+            .size(196.dp)
+            .shadow(if (active) 16.dp else 10.dp, CircleShape, clip = false)
             .clip(CircleShape)
             .background(gradient)
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .padding(16.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(20.dp)
+        Icon(
+            imageVector = Icons.Rounded.Mic,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(56.dp)
+        )
+
+        // Подпись строго внутри круга, по центру, не вылезает
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
+                .fillMaxWidth(0.82f) // ограничиваем ширину подписи
         ) {
-            Icon(
-                imageVector = Icons.Rounded.Mic,
-                contentDescription = "Говорить",
-                tint = Color.White,
-                modifier = Modifier.size(72.dp)
-            )
-            Spacer(Modifier.height(10.dp))
             Text(
                 text = label,
                 color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                lineHeight = 18.sp,
                 modifier = Modifier.fillMaxWidth()
             )
         }
