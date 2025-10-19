@@ -3,6 +3,7 @@ package com.care.voice.ui.speak
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.care.voice.core.ServiceLocator
+import com.care.voice.core.TextSanitizer
 import com.care.voice.platform.voice.RecognitionEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -15,7 +16,8 @@ data class SpeakUiState(
     val assistantText: String = "",
     val error: String? = null,
     val rms: Float = 0f,
-    val speaking: Boolean = false                // 👈 идёт озвучка
+    val speaking: Boolean = false,
+    val autoContinue: Boolean = true        // ★ флаг автоповтора прослушки
 )
 
 class SpeakViewModel : ViewModel() {
@@ -40,13 +42,20 @@ class SpeakViewModel : ViewModel() {
                 when (ev) {
                     is RecognitionEvent.Ready -> state.value = state.value.copy(partial = "", rms = 0f)
                     is RecognitionEvent.Rms -> state.value = state.value.copy(rms = ev.value)
-                    is RecognitionEvent.Partial -> state.value = state.value.copy(partial = ev.text.take(200))
+                    is RecognitionEvent.Partial -> state.value =
+                        state.value.copy(
+                            // ★ можно мягко чистить промежуточный текст
+                            partial = TextSanitizer.forUi(ev.text).take(200)
+                        )
                     is RecognitionEvent.Final -> {
+                        // ★ показываем пользователю очищенную версию
+                        val userUi = TextSanitizer.forUi(ev.text)
                         state.value = state.value.copy(
-                            finalText = ev.text,   // <-- ключевая строка
+                            finalText = userUi,
                             listening = false,
                             partial = ""
                         )
+                        // В LLM отправляем сырой (или trimmed) текст
                         handleAssistant(ev.text)
                     }
                     is RecognitionEvent.Error -> state.value = state.value.copy(error = ev.message, listening = false)
@@ -58,27 +67,55 @@ class SpeakViewModel : ViewModel() {
 
     private fun stop() { listenJob?.cancel(); state.value = state.value.copy(listening = false) }
 
+    // чтобы не путались колбэки разных озвучек
+    private var speakToken = 0
+
     private fun handleAssistant(userText: String) = viewModelScope.launch {
-        val result = repo.chat(userText)
-        result.onSuccess { answer ->
-            state.value = state.value.copy(assistantText = answer)
-            // начинаем озвучку
+        state.value = state.value.copy(error = null)
+
+        val result = repo.chat(userText.trim())
+        result.onSuccess { rawAnswer ->
+            // 1) очищаем двумя профилями
+            val uiText  = TextSanitizer.forUi(rawAnswer)
+            val ttsText = TextSanitizer.forTts(rawAnswer)
+
+            // 2) кладём на экран именно Ui-версию
+            state.value = state.value.copy(assistantText = uiText)
+
+            // 3) безопасный перезапуск TTS
+            tts.stop()
+            val myToken = ++speakToken
             state.value = state.value.copy(speaking = true)
-            tts.speak(answer) {
-                // окончание озвучки
+
+            // 4) озвучиваем TTS-версию
+            tts.speak(ttsText) {
+                if (myToken != speakToken) return@speak
                 state.value = state.value.copy(speaking = false)
-                start(Locale("ru","RU")) // авто-петля при желании
+
+                // 5) автопетля — по флагу
+                if (state.value.autoContinue) {
+                    start(Locale("ru","RU"))
+                }
             }
         }.onFailure { e ->
-            state.value = state.value.copy(error = "Ошибка ИИ: ${e.message}")
+            state.value = state.value.copy(
+                error = "Ошибка ИИ: ${e.message}",
+                speaking = false
+            )
         }
     }
 
     fun repeatAssistant() {
-        val text = state.value.assistantText
-        if (text.isNotBlank()) {
-            state.value = state.value.copy(speaking = true)
-            tts.speak(text) { state.value = state.value.copy(speaking = false) }
+        val ui = state.value.assistantText
+        if (ui.isBlank()) return
+        // ★ Повторяем через жёсткую очистку, чтобы не читались лишние символы
+        val ttsText = TextSanitizer.forTts(ui)
+        tts.stop()
+        val myToken = ++speakToken
+        state.value = state.value.copy(speaking = true)
+        tts.speak(ttsText) {
+            if (myToken != speakToken) return@speak
+            state.value = state.value.copy(speaking = false)
         }
     }
 
@@ -88,8 +125,10 @@ class SpeakViewModel : ViewModel() {
     }
 
     fun debugAskLLM(text: String) {
+        // ★ показываем пользователю очищенную версию
+        val userUi = TextSanitizer.forUi(text)
         state.value = state.value.copy(
-            finalText = text,              // <-- показать последнюю фразу пользователя
+            finalText = userUi,
             assistantText = "",
             error = null
         )

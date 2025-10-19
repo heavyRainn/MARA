@@ -6,7 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Surface
 import com.care.voice.core.ServiceLocator
-import com.care.voice.ui.speak.SpeakScreen
+import com.care.voice.ui.feature.speak.SpeakScreen
 import com.care.voice.ui.theme.YasnaTheme
 
 class App : Application() {
