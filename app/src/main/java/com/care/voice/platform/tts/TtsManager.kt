@@ -10,6 +10,7 @@ class TtsManager(context: Context, locale: Locale = Locale("ru","RU")) {
     private var tts: TextToSpeech? = TextToSpeech(context) { status ->
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = locale
+            tts?.setSpeechRate(0.9f) // скорость (1.0 — стандарт)
         }
     }.apply {
         this?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
