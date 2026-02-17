@@ -6,27 +6,53 @@ import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 import java.util.UUID
 
-class TtsManager(context: Context, locale: Locale = Locale("ru","RU")) {
-    private var tts: TextToSpeech? = TextToSpeech(context) { status ->
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = locale
-            tts?.setSpeechRate(0.9f) // скорость (1.0 — стандарт)
+class TtsManager(
+    context: Context,
+    locale: Locale = Locale("ru", "RU")
+) {
+
+    private var tts: TextToSpeech? = null
+
+    @Volatile
+    private var onDone: (() -> Unit)? = null
+
+    init {
+        tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = locale
+                tts?.setSpeechRate(0.9f)
+            }
         }
-    }.apply {
-        this?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) { onDone?.invoke() }
+
+            override fun onDone(utteranceId: String?) {
+                onDone?.invoke()
+            }
+
             override fun onError(utteranceId: String?) {}
         })
     }
 
-    @Volatile private var onDone: (() -> Unit)? = null
-
     fun speak(text: String, onDone: (() -> Unit)? = null) {
         this.onDone = onDone
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+        tts?.speak(
+            text,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            UUID.randomUUID().toString()
+        )
     }
 
-    fun stop() { tts?.stop() }
-    fun shutdown() { tts?.stop(); tts?.shutdown(); tts = null }
+    fun stop() {
+        tts?.stop()
+    }
+
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+    }
 }
+

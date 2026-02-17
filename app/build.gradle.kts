@@ -1,15 +1,19 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
-    id("kotlin-kapt")
-    // ❌ УБИРАЕМ: id("com.google.devtools.ksp")
+    alias(libs.plugins.kotlin.kapt)
 }
 
 android {
     namespace = "com.care.voice"
-    compileSdk {
-        version = release(36)
+    compileSdk = 36
+
+    kapt {
+        correctErrorTypes = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     defaultConfig {
@@ -70,12 +74,14 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+    implementation(libs.androidx.work.runtime.ktx)
     kapt("com.squareup.moshi:moshi-kotlin-codegen:1.15.1")
 
     // ---- Room (через kapt) ----
     val room = "2.6.1"
     implementation("androidx.room:room-runtime:$room")
     implementation("androidx.room:room-ktx:$room")
+    implementation("androidx.room:room-common:$room")   // ← ДОБАВИТЬ
     kapt("androidx.room:room-compiler:$room")
 
     // ---- DataStore ----

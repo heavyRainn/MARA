@@ -6,23 +6,24 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.care.voice.R
@@ -32,9 +33,10 @@ fun BigMicButton(
     active: Boolean,
     label: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    size: Dp = 220.dp
 ) {
-    // лёгкая «дыхательная» анимация масштаба
+    // лёгкое «дыхание» тучки
     val infinite = rememberInfiniteTransition(label = "cloudPulse")
     val pulse by infinite.animateFloat(
         initialValue = 0.97f,
@@ -51,75 +53,69 @@ fun BigMicButton(
         label = "scaleAnim"
     )
 
-    // если нет второй «активной» картинки, можно оставить одну cloud_idle
-    val cloudRes = if (active) R.drawable.cloud_active else R.drawable.cloud_idle
-
-    // лёгкое свечение поверх, когда активно
-    val glowOverlay = if (active) {
-        Modifier.background(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                    Color.Transparent
-                )
-            )
-        )
-    } else Modifier
-
-    // неблокирующий ripple (bounded, по прямоугольнику — у PNG форма облака задаётся альфой)
-    val ripple = remember { MutableInteractionSource() }
+    val interaction = MutableInteractionSource()
 
     Box(
         modifier = modifier
-            .size(220.dp)
-            .graphicsLayer {
+            .size(size)
+            .graphicsLayer {           // без тени/фона — контейнер прозрачный
                 scaleX = scale
                 scaleY = scale
-                // лёгкая тень под облаком
-                shadowElevation = if (active) 18f else 12f
-                shape = RoundedCornerShape(36.dp) // сгладим края клика/тени
-                clip = false
             }
             .clickable(
-                interactionSource = ripple,
-                indication = null, // рипл можно отключить, облако и так «дышит»
+                interactionSource = interaction,
+                indication = null,
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
     ) {
-        // фон — облако с прозрачностью
+        // сама тучка (PNG с альфой), без дополнительного фона
         Image(
-            painter = painterResource(cloudRes),
+            painter = painterResource(if (active) R.drawable.cloud_active else R.drawable.cloud_idle),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit
         )
 
-        // мягкий подсвет-оверлей при активности
-        Box(modifier = Modifier.fillMaxSize().then(glowOverlay))
+        // лёгкий glow при активной записи
+        if (active) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+        }
 
-        // иконка микрофона
+        // иконка микрофона (без отдельной тёмной плашки — просили максимально «чисто»)
         Icon(
             imageVector = Icons.Rounded.Mic,
             contentDescription = null,
-            tint = Color.White,
+            tint = Color.White.copy(alpha = 0.5f),
             modifier = Modifier
                 .align(Alignment.Center)
-                .size(48.dp)
+                .size(size * 0.22f)
         )
 
-        // подпись внутри облака
+        // подпись внутри тучки — крупнее и не вылезает
         Text(
             text = label,
             color = Color.White,
-            fontSize = 14.sp,
+            fontSize = 16.sp,                // ← крупнее
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 18.dp)
-                .fillMaxWidth(0.8f)
+                .padding(bottom = 12.dp)
+                .fillMaxWidth(0.82f)
         )
     }
 }
