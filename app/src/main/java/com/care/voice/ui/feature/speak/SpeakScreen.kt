@@ -6,21 +6,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.care.voice.BuildConfig
 import com.care.voice.ui.components.AssistantBubble
 import com.care.voice.ui.components.Backdrop
 import com.care.voice.ui.components.BigMicButton
+import com.care.voice.platform.voice.YasnaSpeechLog
 import com.care.voice.ui.components.UserBubble
 import com.care.voice.ui.speak.SpeakViewModel
 import java.util.Locale
@@ -34,14 +31,15 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermissionState.value = granted
-        if (granted) vm.toggle(Locale("ru","RU"))
+        YasnaSpeechLog.d("RECORD_AUDIO permission state=$granted (after request)")
+        if (granted) vm.toggle(Locale.forLanguageTag("ru-RU"))
     }
 
-    val context = LocalContext.current           // ← читаем здесь
-    LaunchedEffect(context, permission) {        // ← передаём как ключи
+    val context = LocalContext.current
+    LaunchedEffect(context, permission) {
         hasPermissionState.value =
             ContextCompat.checkSelfPermission(context, permission) ==
-                    PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
     }
 
     val ui by vm.state
@@ -49,13 +47,12 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
 
     val micLabel = when {
         !hasPermission -> "Разрешите микрофон"
-        ui.listening   -> "Слушаю… говорите"
-        else           -> "Нажмите, чтобы говорить"
+        ui.listening -> "Слушаю… говорите"
+        else -> "Нажмите, чтобы говорить"
     }
 
-    // ==== ФОН + КОНТЕНТ ====
     Box(Modifier.fillMaxSize()) {
-        Backdrop() // ← тучка под всем
+        Backdrop()
 
         Column(
             modifier = Modifier
@@ -66,10 +63,15 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
         ) {
             BigMicButton(
                 active = ui.listening,
-                label  = micLabel,
+                label = micLabel,
                 onClick = {
-                    if (!hasPermission) requestPermission.launch(permission)
-                    else vm.toggle(Locale("ru","RU"))
+                    YasnaSpeechLog.d("microphone button clicked hasPermission=$hasPermission")
+                    if (!hasPermission) {
+                        YasnaSpeechLog.d("launching RECORD_AUDIO permission request")
+                        requestPermission.launch(permission)
+                    } else {
+                        vm.toggle(Locale.forLanguageTag("ru-RU"))
+                    }
                 }
             )
 
@@ -85,7 +87,6 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
 
             Spacer(Modifier.height(12.dp))
 
-            // Чат занимает всё оставшееся между микрофоном и низом
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -93,16 +94,18 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (ui.finalText.isNotBlank())
+                if (ui.finalText.isNotBlank()) {
                     UserBubble(text = ui.finalText.trim(), isFirst = ui.assistantText.isBlank())
+                }
 
-                if (ui.assistantText.isNotBlank())
+                if (ui.assistantText.isNotBlank()) {
                     AssistantBubble(
                         text = ui.assistantText,
                         isSpeaking = ui.speaking,
                         onRepeatVoice = { vm.repeatAssistant() },
-                        onStopVoice   = { vm.stopSpeaking() }
+                        onStopVoice = { vm.stopSpeaking() }
                     )
+                }
 
                 ui.error?.let {
                     Surface(
@@ -119,28 +122,6 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
-                }
-            }
-
-            // DEV-панель — как было
-            if (BuildConfig.DEBUG) {
-                Spacer(Modifier.height(12.dp))
-                var devText by remember { mutableStateOf("") }
-                OutlinedTextField(
-                    value = devText,
-                    onValueChange = { devText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("DEV-ввод (обходит микрофон)") },
-                    placeholder = { Text("Например: расскажи анекдот") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = {
-                        if (devText.isNotBlank()) vm.debugAskLLM(devText.trim())
-                    })
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { if (devText.isNotBlank()) vm.debugAskLLM(devText.trim()) }) {
-                    Text("Отправить в ИИ")
                 }
             }
         }

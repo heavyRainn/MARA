@@ -1,62 +1,98 @@
-// ServiceLocator.kt
 package com.care.voice.core
 
 import android.app.Application
-import androidx.room.Room
-import com.care.voice.data.history.AppDb
+import com.care.voice.BuildConfig
+import com.care.voice.brain.AssistantOrchestrator
+import com.care.voice.brain.memory.extract.GroqMemoryExtractor
+import com.care.voice.brain.memory.pipeline.MemoryPipeline
+import com.care.voice.brain.reminder.ReminderIntentResolver
+import com.care.voice.brain.summary.ConversationSummarizer
 import com.care.voice.data.history.ChatHistoryRepository
 import com.care.voice.data.net.LlmApi
 import com.care.voice.data.reminder.ReminderScheduler
-import com.care.voice.data.repository.AssistantRepositoryImpl
-import com.care.voice.domain.repository.AssistantRepository
+import com.care.voice.platform.android.llm.GroqLanguageModel
+import com.care.voice.platform.android.persistence.RoomConversationRepository
+import com.care.voice.platform.android.persistence.RoomMemoryRepository
+import com.care.voice.platform.android.persistence.RoomMemoryStore
+import com.care.voice.platform.android.persistence.RoomPendingActionRepository
+import com.care.voice.platform.android.persistence.RoomSummaryRepository
+import com.care.voice.platform.android.persistence.YasnaDatabase
+import com.care.voice.platform.android.reminder.AndroidReminderScheduler
+import com.care.voice.platform.android.reminder.ReminderRuntime
+import com.care.voice.platform.android.memory.MemoryConsolidationScheduler
+import com.care.voice.platform.android.session.RoomSessionManager
 import com.care.voice.platform.tts.TtsManager
 import com.care.voice.platform.voice.RecognitionManager
 import java.util.Locale
-import java.util.UUID
 
 object ServiceLocator {
     lateinit var app: Application
+        private set
 
-    private const val GROQ_KEY = "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"
+    private val appContext get() = app.applicationContext
 
-    @Volatile var currentSessionId: String = "default"
-    fun startNewSession(): String {
-        currentSessionId = UUID.randomUUID().toString()
-        return currentSessionId
-    }
-
-    // Speech
-    val recognition by lazy { RecognitionManager(app) }
-    val tts by lazy { TtsManager(app, Locale("ru", "RU")) }
-
-
-    // LLM (Groq)
     private const val MODEL = "llama-3.1-8b-instant"
-    val llmApi by lazy { LlmApi.groq(GROQ_KEY) }
 
-    // Room DB + история
-    private val db by lazy {
-        Room.databaseBuilder(app, AppDb::class.java, "yasna.db")
-            .fallbackToDestructiveMigration()
-            .build()
+    val isGroqConfigured: Boolean
+        get() = BuildConfig.GROQ_API_KEY.isNotBlank()
+
+    fun init(application: Application) {
+        app = application
+        require(isGroqConfigured) {
+            "Groq API key is missing. Add groq.api.key=... to local.properties"
+        }
     }
-    val historyRepo by lazy { ChatHistoryRepository(db.messages()) }
-    val userProfileDao by lazy { db.userProfile() }
-    val reminderDao by lazy { db.reminders() }
-    val reminderScheduler by lazy { ReminderScheduler(app) }
 
-    val assistantRepo: AssistantRepository by lazy {
-        AssistantRepositoryImpl(
-            api = llmApi,
-            model = MODEL,
-            history = historyRepo,
-            userProfileDao = userProfileDao,
-            reminderDao = reminderDao,               // ← новое
-            reminderScheduler = reminderScheduler,   // ← новое
-            sessionIdProvider = { currentSessionId },
-            historyTail = 8
+    val recognition by lazy { RecognitionManager(appContext) }
+    val tts by lazy { TtsManager(appContext, Locale.forLanguageTag("ru-RU")) }
+
+    val assistantOrchestrator by lazy {
+        val db = YasnaDatabase.create(appContext)
+        val historyRepo = ChatHistoryRepository(db.messages())
+        val userProfileDao = db.userProfile()
+        val summaryDao = db.chatSummaryDao()
+        val reminderDao = db.reminders()
+        val alarmScheduler = ReminderScheduler(appContext)
+
+        ReminderRuntime.initialize(reminderDao, alarmScheduler)
+
+        val languageModel = GroqLanguageModel(
+            api = LlmApi.groq(BuildConfig.GROQ_API_KEY),
+            model = MODEL
+        )
+        val memoryStore = RoomMemoryStore(historyRepo, userProfileDao, summaryDao, historyTail = 8)
+        val conversationRepository = RoomConversationRepository(historyRepo)
+        val memoryRepository = RoomMemoryRepository(db.memoryFacts())
+        val summaryRepository = RoomSummaryRepository(summaryDao)
+        val pendingActionRepository = RoomPendingActionRepository(db.pendingActions())
+        val sessionManager = RoomSessionManager(db.conversationSessions())
+        val reminderScheduler = AndroidReminderScheduler(reminderDao, alarmScheduler)
+
+        val memoryPipeline = MemoryPipeline(
+            extractor = GroqMemoryExtractor(languageModel),
+            memoryRepository = memoryRepository,
+            conversationRepository = conversationRepository,
+            summaryRepository = summaryRepository,
+            memoryStore = memoryStore,
+            pendingActionRepository = pendingActionRepository
+        )
+
+        AssistantOrchestrator(
+            languageModel = languageModel,
+            memoryStore = memoryStore,
+            conversationRepository = conversationRepository,
+            reminderScheduler = reminderScheduler,
+            sessionManager = sessionManager,
+            pendingActionRepository = pendingActionRepository,
+            memoryPipeline = memoryPipeline,
+            reminderIntentResolver = ReminderIntentResolver(languageModel),
+            conversationSummarizer = ConversationSummarizer(languageModel, memoryStore),
+            historyTail = 8,
+            onMemoryChanged = { MemoryConsolidationScheduler.scheduleDeferred(appContext) }
         )
     }
 
-
+    fun wirePlatformRuntime() {
+        assistantOrchestrator
+    }
 }
