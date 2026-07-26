@@ -7,6 +7,6 @@ import com.care.voice.data.history.AppDb
 object YasnaDatabase {
     fun create(context: Context): AppDb =
         Room.databaseBuilder(context, AppDb::class.java, "yasna.db")
-            .addMigrations(MIGRATION_6_7)
+            .fallbackToDestructiveMigration()
             .build()
 }

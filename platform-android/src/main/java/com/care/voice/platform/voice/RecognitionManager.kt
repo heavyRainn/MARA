@@ -14,16 +14,27 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.Dispatchers
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 sealed interface RecognitionEvent {
     data class Partial(val text: String, val rms: Float) : RecognitionEvent
-    data class Final(val text: String) : RecognitionEvent
-    data class Error(val code: Int, val message: String) : RecognitionEvent
+    data class Final(val text: String, val sessionToken: Long) : RecognitionEvent
+    data class Error(
+        val kind: RecognitionErrorKind,
+        val rawCode: Int,
+        val sessionToken: Long
+    ) : RecognitionEvent
     data class Rms(val value: Float) : RecognitionEvent
     data object Ready : RecognitionEvent
     data object End : RecognitionEvent
 }
+
+private data class ActiveSession(
+    val token: Long,
+    val finalDelivered: AtomicBoolean,
+    val emit: (RecognitionEvent) -> Unit
+)
 
 class RecognitionManager(context: Context) {
 
@@ -33,14 +44,13 @@ class RecognitionManager(context: Context) {
     @Volatile
     private var recognizer: SpeechRecognizer? = null
 
-    /** Active flow emitter; null when no session is running. */
-    private val activeEmitter = AtomicReference<((RecognitionEvent) -> Unit)?>(null)
+    private val activeSession = AtomicReference<ActiveSession?>(null)
     private var rmsLogCounter = 0
 
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
-            YasnaSpeechLog.d("onReadyForSpeech")
-            emit(RecognitionEvent.Ready)
+            YasnaSpeechLog.d("onReadyForSpeech sessionToken=${activeSession.get()?.token}")
+            emitForActive { it.emit(RecognitionEvent.Ready) }
         }
 
         override fun onBeginningOfSpeech() {
@@ -51,7 +61,7 @@ class RecognitionManager(context: Context) {
             if (rmsLogCounter++ % 15 == 0) {
                 YasnaSpeechLog.d("onRmsChanged rms=${"%.1f".format(rmsdB)}")
             }
-            emit(RecognitionEvent.Rms(rmsdB))
+            emitForActive { it.emit(RecognitionEvent.Rms(rmsdB)) }
         }
 
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -61,32 +71,47 @@ class RecognitionManager(context: Context) {
         }
 
         override fun onError(error: Int) {
-            YasnaSpeechLog.w("onError ${YasnaSpeechLog.decodeError(error)}")
+            val session = activeSession.get()
+            YasnaSpeechLog.w("onError ${YasnaSpeechLog.decodeError(error)} sessionToken=${session?.token}")
             if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
                 mainHandler.post {
                     YasnaSpeechLog.d("cancel (ERROR_RECOGNIZER_BUSY recovery)")
                     recognizer?.cancel()
                 }
             }
-            emit(RecognitionEvent.Error(error, mapError(error)))
-            emit(RecognitionEvent.End)
-            activeEmitter.set(null)
+            session?.let {
+                val kind = RecognitionErrors.normalize(error)
+                it.emit(RecognitionEvent.Error(kind, error, it.token))
+                it.emit(RecognitionEvent.End)
+            }
+            clearSessionIfMatches(session?.token)
         }
 
         override fun onResults(results: Bundle) {
+            val session = activeSession.get() ?: return
             val matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = matches?.firstOrNull().orEmpty()
-            YasnaSpeechLog.dRecognized("onResults count=${matches?.size ?: 0}", text)
-            if (text.isNotBlank()) emit(RecognitionEvent.Final(text))
-            emit(RecognitionEvent.End)
-            activeEmitter.set(null)
+            YasnaSpeechLog.dRecognized("onResults count=${matches?.size ?: 0} sessionToken=${session.token}", text)
+
+            if (text.isNotBlank() && session.finalDelivered.compareAndSet(false, true)) {
+                session.emit(RecognitionEvent.Final(text, session.token))
+                mainHandler.post {
+                    YasnaSpeechLog.d("cancel after final sessionToken=${session.token}")
+                    recognizer?.cancel()
+                }
+            } else if (text.isNotBlank()) {
+                YasnaSpeechLog.w("duplicate final ignored sessionToken=${session.token}")
+            }
+
+            session.emit(RecognitionEvent.End)
+            clearSessionIfMatches(session.token)
         }
 
         override fun onPartialResults(partialResults: Bundle) {
             val matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = matches?.firstOrNull().orEmpty()
             YasnaSpeechLog.dRecognized("onPartialResults count=${matches?.size ?: 0}", text)
-            emit(RecognitionEvent.Partial(text, 0f))
+            emitForActive { it.emit(RecognitionEvent.Partial(text, 0f)) }
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -94,11 +119,17 @@ class RecognitionManager(context: Context) {
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(appContext)
 
-    fun listen(locale: Locale): Flow<RecognitionEvent> = callbackFlow {
+    fun listen(locale: Locale, sessionToken: Long): Flow<RecognitionEvent> = callbackFlow {
         val available = isAvailable()
-        YasnaSpeechLog.d("SpeechRecognizer.isRecognitionAvailable=$available")
+        YasnaSpeechLog.d("SpeechRecognizer.isRecognitionAvailable=$available sessionToken=$sessionToken")
         if (!available) {
-            trySend(RecognitionEvent.Error(-1, "Служба распознавания недоступна"))
+            trySend(
+                RecognitionEvent.Error(
+                    RecognitionErrorKind.Unknown,
+                    -1,
+                    sessionToken
+                )
+            )
             close()
             return@callbackFlow
         }
@@ -106,39 +137,61 @@ class RecognitionManager(context: Context) {
         val languageTag = locale.toLanguageTag().ifBlank { "ru-RU" }
         val intent = buildRecognizerIntent(languageTag)
 
-        activeEmitter.set { event -> trySend(event) }
+        val session = ActiveSession(
+            token = sessionToken,
+            finalDelivered = AtomicBoolean(false),
+            emit = { event -> trySend(event) }
+        )
+        activeSession.set(session)
 
         mainHandler.post {
             try {
                 cancelInternal()
                 val instance = getOrCreateRecognizer()
                 instance.setRecognitionListener(recognitionListener)
-                YasnaSpeechLog.d("startListening called language=$languageTag")
+                YasnaSpeechLog.d("startListening language=$languageTag sessionToken=$sessionToken")
                 instance.startListening(intent)
             } catch (t: Throwable) {
-                YasnaSpeechLog.w("startListening failed", t)
-                trySend(RecognitionEvent.Error(SpeechRecognizer.ERROR_CLIENT, mapError(SpeechRecognizer.ERROR_CLIENT)))
+                YasnaSpeechLog.w("startListening failed sessionToken=$sessionToken", t)
+                trySend(
+                    RecognitionEvent.Error(
+                        RecognitionErrors.normalize(SpeechRecognizer.ERROR_CLIENT),
+                        SpeechRecognizer.ERROR_CLIENT,
+                        sessionToken
+                    )
+                )
                 trySend(RecognitionEvent.End)
-                activeEmitter.set(null)
+                clearSessionIfMatches(sessionToken)
                 close()
             }
         }
 
         awaitClose {
             mainHandler.post {
-                YasnaSpeechLog.d("cancel (flow closed)")
-                recognizer?.cancel()
-                activeEmitter.set(null)
+                YasnaSpeechLog.d("cancel (flow closed) sessionToken=$sessionToken")
+                if (activeSession.get()?.token == sessionToken) {
+                    recognizer?.cancel()
+                    clearSessionIfMatches(sessionToken)
+                }
             }
         }
     }.flowOn(Dispatchers.Main.immediate)
+
+    fun cancelActiveSession(reason: String = "explicit_cancel") {
+        mainHandler.post {
+            val token = activeSession.get()?.token
+            YasnaSpeechLog.d("cancelActiveSession reason=$reason sessionToken=$token")
+            recognizer?.cancel()
+            clearSessionIfMatches(token)
+        }
+    }
 
     fun destroy() {
         mainHandler.post {
             YasnaSpeechLog.d("destroy")
             recognizer?.destroy()
             recognizer = null
-            activeEmitter.set(null)
+            activeSession.set(null)
         }
     }
 
@@ -156,8 +209,15 @@ class RecognitionManager(context: Context) {
         recognizer?.cancel()
     }
 
-    private fun emit(event: RecognitionEvent) {
-        activeEmitter.get()?.invoke(event)
+    private fun emitForActive(block: (ActiveSession) -> Unit) {
+        activeSession.get()?.let(block)
+    }
+
+    private fun clearSessionIfMatches(token: Long?) {
+        if (token == null) return
+        activeSession.updateAndGet { current ->
+            if (current?.token == token) null else current
+        }
     }
 
     private fun buildRecognizerIntent(languageTag: String): Intent =
@@ -167,17 +227,4 @@ class RecognitionManager(context: Context) {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
-
-    private fun mapError(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Сеть: таймаут"
-        SpeechRecognizer.ERROR_NETWORK -> "Проблема сети"
-        SpeechRecognizer.ERROR_AUDIO -> "Проблема аудио"
-        SpeechRecognizer.ERROR_SERVER -> "Ошибка сервера"
-        SpeechRecognizer.ERROR_CLIENT -> "Клиентская ошибка"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Нет речи"
-        SpeechRecognizer.ERROR_NO_MATCH -> "Не удалось распознать"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Распознаватель занят"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Нет разрешения на микрофон"
-        else -> YasnaSpeechLog.decodeError(code)
-    }
 }

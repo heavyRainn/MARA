@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +21,7 @@ import com.care.voice.ui.components.BigMicButton
 import com.care.voice.platform.voice.YasnaSpeechLog
 import com.care.voice.ui.components.UserBubble
 import com.care.voice.ui.speak.SpeakViewModel
+import com.care.voice.ui.speak.VoiceState
 import java.util.Locale
 
 @Composable
@@ -32,7 +34,7 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
     ) { granted ->
         hasPermissionState.value = granted
         YasnaSpeechLog.d("RECORD_AUDIO permission state=$granted (after request)")
-        if (granted) vm.toggle(Locale.forLanguageTag("ru-RU"))
+        if (granted) vm.onMicPressed(Locale.forLanguageTag("ru-RU"))
     }
 
     val context = LocalContext.current
@@ -44,12 +46,22 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
 
     val ui by vm.state
     val hasPermission = hasPermissionState.value
+    val voiceState = ui.voiceState
 
     val micLabel = when {
         !hasPermission -> "Разрешите микрофон"
-        ui.listening -> "Слушаю… говорите"
+        voiceState == VoiceState.StartingListening -> "Подключаю микрофон…"
+        voiceState == VoiceState.Listening -> "Слушаю… говорите"
+        voiceState == VoiceState.Processing -> "Думаю…"
+        voiceState == VoiceState.Speaking -> "Говорю… нажмите, чтобы остановить"
+        voiceState == VoiceState.FollowUpWindow -> "Можете продолжить…"
+        voiceState == VoiceState.Error -> "Ошибка — нажмите, чтобы повторить"
         else -> "Нажмите, чтобы говорить"
     }
+
+    val micActive = voiceState == VoiceState.Listening ||
+        voiceState == VoiceState.StartingListening ||
+        voiceState == VoiceState.FollowUpWindow
 
     Box(Modifier.fillMaxSize()) {
         Backdrop()
@@ -62,22 +74,22 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             BigMicButton(
-                active = ui.listening,
+                active = micActive,
                 label = micLabel,
                 onClick = {
-                    YasnaSpeechLog.d("microphone button clicked hasPermission=$hasPermission")
+                    YasnaSpeechLog.d("microphone button clicked hasPermission=$hasPermission state=$voiceState")
                     if (!hasPermission) {
                         YasnaSpeechLog.d("launching RECORD_AUDIO permission request")
                         requestPermission.launch(permission)
                     } else {
-                        vm.toggle(Locale.forLanguageTag("ru-RU"))
+                        vm.onMicPressed(Locale.forLanguageTag("ru-RU"))
                     }
                 }
             )
 
             Spacer(Modifier.height(12.dp))
 
-            if (ui.listening) {
+            if (voiceState == VoiceState.Listening || voiceState == VoiceState.StartingListening) {
                 LinearProgressIndicator(
                     modifier = Modifier.width(220.dp).height(6.dp),
                     progress = { ((ui.rms + 2f) / 10f).coerceIn(0f, 1f) }
@@ -85,7 +97,30 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
                 Spacer(Modifier.height(6.dp))
             }
 
+            if (voiceState == VoiceState.Processing) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(6.dp))
+            }
+
             Spacer(Modifier.height(12.dp))
+
+            ui.transientHint?.let { hint ->
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Text(
+                        hint,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
 
             Column(
                 modifier = Modifier
@@ -101,7 +136,7 @@ fun SpeakScreen(vm: SpeakViewModel = viewModel()) {
                 if (ui.assistantText.isNotBlank()) {
                     AssistantBubble(
                         text = ui.assistantText,
-                        isSpeaking = ui.speaking,
+                        isSpeaking = voiceState == VoiceState.Speaking,
                         onRepeatVoice = { vm.repeatAssistant() },
                         onStopVoice = { vm.stopSpeaking() }
                     )

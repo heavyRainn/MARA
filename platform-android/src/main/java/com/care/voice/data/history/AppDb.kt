@@ -16,8 +16,8 @@ import com.care.voice.data.repository.*
         MemoryFactSourceEntity::class,
         MemoryTombstoneEntity::class
     ],
-    version = 7,
-    exportSchema = true
+    version = 1,
+    exportSchema = false
 )
 abstract class AppDb : RoomDatabase() {
     abstract fun messages(): MessagesDao
