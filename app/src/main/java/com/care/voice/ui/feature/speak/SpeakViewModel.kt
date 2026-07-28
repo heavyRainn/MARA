@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.care.voice.brain.AssistantInput
 import com.care.voice.brain.AssistantResult
+import com.care.voice.brain.ReminderSetupKind
 import com.care.voice.brain.util.TextSanitizer
 import com.care.voice.core.ServiceLocator
 import com.care.voice.platform.tts.TtsCallbacks
@@ -15,6 +16,8 @@ import com.care.voice.platform.voice.RecognitionEvent
 import com.care.voice.platform.voice.YasnaSpeechLog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -51,6 +54,39 @@ class SpeakViewModel : ViewModel() {
     private var ttsUtteranceId: String? = null
     private var followUpActive = false
     private var activeListenMode = ListenMode.Manual
+
+    private val _reminderSetupRequests = MutableSharedFlow<ReminderSetupRequest>(extraBufferCapacity = 1)
+    val reminderSetupRequests = _reminderSetupRequests.asSharedFlow()
+    private var pendingExactAlarmRetryId: String? = null
+    var pendingNotificationRetryId: String? = null
+        private set
+
+    data class ReminderSetupRequest(
+        val kind: ReminderSetupKind,
+        val pendingActionId: String
+    )
+
+    fun setPendingNotificationRetry(pendingActionId: String) {
+        pendingNotificationRetryId = pendingActionId
+    }
+
+    fun clearPendingNotificationRetry() {
+        pendingNotificationRetryId = null
+    }
+
+    fun onActivityResumed() {
+        val pendingId = pendingExactAlarmRetryId ?: return
+        if (!ServiceLocator.reminderCapabilityChecker.canScheduleExactAlarms()) return
+        pendingExactAlarmRetryId = null
+        retryPendingReminder(pendingId)
+    }
+
+    fun retryPendingReminder(pendingActionId: String) {
+        assistantJob?.cancel()
+        assistantJob = viewModelScope.launch {
+            processAssistantResult(orchestrator.retryPendingReminderSchedule(pendingActionId))
+        }
+    }
 
     fun onMicPressed(locale: Locale = RU_LOCALE) {
         val current = state.value.voiceState
@@ -280,18 +316,37 @@ class SpeakViewModel : ViewModel() {
     private fun handleAssistant(userText: String) {
         assistantJob?.cancel()
         assistantJob = viewModelScope.launch {
-            when (val result = orchestrator.handle(AssistantInput.UserMessage(userText.trim()))) {
-                is AssistantResult.Reply -> deliverAssistantSpeech(result.text)
-                is AssistantResult.ConfirmationRequired -> deliverAssistantSpeech(result.text)
-                is AssistantResult.ActionCompleted -> deliverAssistantSpeech(result.text)
-                is AssistantResult.ActionCancelled -> deliverAssistantSpeech(result.text)
-                is AssistantResult.Failure -> {
-                    state.value = state.value.copy(
-                        assistantText = TextSanitizer.forUi(result.userMessage),
-                        error = result.userMessage
-                    )
-                    dispatch(VoiceEvent.AssistantFailed(result.userMessage), "assistant_failure")
+            processAssistantResult(orchestrator.handle(AssistantInput.UserMessage(userText.trim())))
+        }
+    }
+
+    private suspend fun processAssistantResult(result: AssistantResult) {
+        when (result) {
+            is AssistantResult.Reply -> deliverAssistantSpeech(result.text)
+            is AssistantResult.ConfirmationRequired -> deliverAssistantSpeech(result.text)
+            is AssistantResult.ActionCompleted -> deliverAssistantSpeech(result.text)
+            is AssistantResult.ActionCancelled -> deliverAssistantSpeech(result.text)
+            is AssistantResult.ReminderSetupRequired -> {
+                state.value = state.value.copy(
+                    assistantText = TextSanitizer.forUi(result.userMessage),
+                    error = null
+                )
+                dispatch(VoiceEvent.AssistantReplyReady(result.userMessage), "reminder_setup_required")
+                prepareForTts("reminder_setup_required")
+                speakTts(TextSanitizer.forTts(result.userMessage), "reminder_setup_required")
+                if (result.kind == ReminderSetupKind.EXACT_ALARM_PERMISSION) {
+                    pendingExactAlarmRetryId = result.pendingActionId
                 }
+                _reminderSetupRequests.emit(
+                    ReminderSetupRequest(result.kind, result.pendingActionId)
+                )
+            }
+            is AssistantResult.Failure -> {
+                state.value = state.value.copy(
+                    assistantText = TextSanitizer.forUi(result.userMessage),
+                    error = result.userMessage
+                )
+                dispatch(VoiceEvent.AssistantFailed(result.userMessage), "assistant_failure")
             }
         }
     }

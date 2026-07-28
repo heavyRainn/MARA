@@ -3,6 +3,7 @@ package com.care.voice.brain.reminder
 import com.care.voice.brain.AssistantError
 import com.care.voice.brain.AssistantResult
 import com.care.voice.brain.ReminderPendingCommand
+import com.care.voice.brain.ReminderSetupKind
 import java.util.Locale
 
 /**
@@ -54,10 +55,16 @@ class ReminderCoordinator(
             triggerAtEpochMillis = parsedTime.triggerAt,
             isRepeating = parsedTime.isRepeating,
             repeatIntervalMillis = parsedTime.repeatIntervalMillis,
-            humanReadableTime = parsedTime.humanReadableTime
+            humanReadableTime = parsedTime.humanReadableTime,
+            precision = parsedTime.precision
         )
+        val precisionHint = if (parsedTime.precision == ReminderPrecision.FLEXIBLE) {
+            " (примерное время)"
+        } else {
+            ""
+        }
         return CandidateResult(
-            answer = "Поставить напоминание: «$title» на ${parsedTime.humanReadableTime}? Скажите: да или нет.",
+            answer = "Поставить напоминание: «$title» на ${parsedTime.humanReadableTime}$precisionHint? Скажите: да или нет.",
             pending = pending,
             requiresConfirmation = true
         )
@@ -70,19 +77,46 @@ class ReminderCoordinator(
         val request = ReminderRequest(
             text = schedule.title,
             triggerAtMillis = schedule.triggerAtEpochMillis,
+            precision = schedule.precision,
             isRepeating = schedule.isRepeating,
             repeatIntervalMillis = schedule.repeatIntervalMillis
         )
 
         return when (val result = scheduler.schedule(request)) {
-            is ReminderScheduleResult.Failure -> AssistantResult.Failure(
-                error = AssistantError.ActionExecutionFailed,
-                userMessage = "Не удалось поставить напоминание: ${result.message}"
+            is ScheduleReminderResult.Success -> AssistantResult.ActionCompleted(
+                buildSuccessMessage(schedule, result.precision)
             )
-            is ReminderScheduleResult.Success -> AssistantResult.ActionCompleted(
-                "Готово. Напомню: «${schedule.title}» — ${schedule.humanReadableTime}."
+            ScheduleReminderResult.NotificationPermissionRequired -> AssistantResult.ReminderSetupRequired(
+                kind = ReminderSetupKind.NOTIFICATION_PERMISSION,
+                userMessage = "Чтобы я могла показывать напоминания, разрешите уведомления.",
+                pendingActionId = ""
+            )
+            ScheduleReminderResult.ExactAlarmPermissionRequired -> AssistantResult.ReminderSetupRequired(
+                kind = ReminderSetupKind.EXACT_ALARM_PERMISSION,
+                userMessage = "Для точного напоминания нужно разрешение на будильники и напоминания.",
+                pendingActionId = ""
+            )
+            is ScheduleReminderResult.InvalidTime -> AssistantResult.Failure(
+                error = AssistantError.InvalidReminder,
+                userMessage = "Не удалось определить корректное время напоминания."
+            )
+            is ScheduleReminderResult.Failure -> AssistantResult.Failure(
+                error = AssistantError.ActionExecutionFailed,
+                userMessage = "Не удалось поставить напоминание. Я ничего не запланировала."
             )
         }
+    }
+
+    fun buildSuccessMessage(
+        schedule: ReminderPendingCommand.ScheduleReminder,
+        precision: ReminderPrecision
+    ): String {
+        val precisionSuffix = if (precision == ReminderPrecision.FLEXIBLE) {
+            " (примерное время)"
+        } else {
+            ""
+        }
+        return "Готово. Напомню: «${schedule.title}» — ${schedule.humanReadableTime}$precisionSuffix."
     }
 
     fun buildCancelled(schedule: ReminderPendingCommand.ScheduleReminder?): String {

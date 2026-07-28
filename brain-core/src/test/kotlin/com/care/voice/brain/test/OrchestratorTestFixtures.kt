@@ -14,7 +14,7 @@ import com.care.voice.brain.pending.FakePendingActionRepository
 import com.care.voice.brain.reminder.ReminderCoordinator
 import com.care.voice.brain.reminder.ReminderIntentResolver
 import com.care.voice.brain.reminder.ReminderRequest
-import com.care.voice.brain.reminder.ReminderScheduleResult
+import com.care.voice.brain.reminder.ScheduleReminderResult
 import com.care.voice.brain.reminder.ReminderScheduler
 import com.care.voice.brain.reminder.ReminderTimeParser
 import com.care.voice.brain.session.FakeSessionManager
@@ -49,12 +49,12 @@ object OrchestratorTestFixtures {
         }
 
         val reminderScheduler = object : ReminderScheduler {
-            override suspend fun schedule(request: ReminderRequest): ReminderScheduleResult {
+            override suspend fun schedule(request: ReminderRequest): ScheduleReminderResult {
                 scheduleCount.incrementAndGet()
                 return if (scheduleFails) {
-                    ReminderScheduleResult.Failure("alarm failed")
+                    ScheduleReminderResult.Failure("alarm failed")
                 } else {
-                    ReminderScheduleResult.Success(1L)
+                    ScheduleReminderResult.Success(1L, System.currentTimeMillis(), request.precision)
                 }
             }
         }

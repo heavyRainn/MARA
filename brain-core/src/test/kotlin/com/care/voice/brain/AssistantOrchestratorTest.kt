@@ -91,7 +91,11 @@ class AssistantOrchestratorTest {
             conversationRepository = conversation,
             reminderScheduler = object : com.care.voice.brain.reminder.ReminderScheduler {
                 override suspend fun schedule(request: com.care.voice.brain.reminder.ReminderRequest) =
-                    com.care.voice.brain.reminder.ReminderScheduleResult.Success(1L)
+                    com.care.voice.brain.reminder.ScheduleReminderResult.Success(
+                        1L,
+                        System.currentTimeMillis(),
+                        request.precision
+                    )
             },
             sessionManager = com.care.voice.brain.session.FakeSessionManager(),
             pendingActionRepository = pending,

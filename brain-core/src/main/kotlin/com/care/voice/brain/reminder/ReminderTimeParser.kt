@@ -14,7 +14,8 @@ class ReminderTimeParser(
         val triggerAt: Long,
         val isRepeating: Boolean,
         val repeatIntervalMillis: Long?,
-        val humanReadableTime: String
+        val humanReadableTime: String,
+        val precision: ReminderPrecision
     )
 
     fun parse(timeExpression: String?, repeatExpression: String?): Parsed? {
@@ -24,11 +25,13 @@ class ReminderTimeParser(
 
         val repeatInterval = parseRepeatInterval(repeat)
         val triggerAt = parseTriggerAt(time, repeat) ?: return null
+        val precision = inferPrecision(time, repeat)
         return Parsed(
             triggerAt = triggerAt,
             isRepeating = repeatInterval != null,
             repeatIntervalMillis = repeatInterval,
-            humanReadableTime = formatHuman(triggerAt, repeatInterval)
+            humanReadableTime = formatHuman(triggerAt, repeatInterval),
+            precision = precision
         )
     }
 
@@ -204,6 +207,19 @@ class ReminderTimeParser(
             TimeUnit.DAYS.toMillis(30) -> "$base, каждый месяц"
             else -> base
         }
+    }
+
+    private fun inferPrecision(time: String, repeat: String): ReminderPrecision {
+        if (parseRelativeDelay(time) != null) return ReminderPrecision.EXACT
+        if (parseExplicitTime(time) != null) return ReminderPrecision.EXACT
+        if (time.contains("около")) return ReminderPrecision.FLEXIBLE
+        if (parseApproximatePartOfDay(time) != null &&
+            !Regex("(?:в\\s*)?\\d{1,2}[:.]\\d{2}").containsMatchIn(time)
+        ) {
+            return ReminderPrecision.FLEXIBLE
+        }
+        if (repeat.contains("кажд") && parseExplicitTime(time) == null) return ReminderPrecision.FLEXIBLE
+        return ReminderPrecision.EXACT
     }
 
     private fun String?.normalizeRu(): String = this?.trim()?.lowercase(Locale("ru", "RU"))?.replace('ё', 'е').orEmpty()

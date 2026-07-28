@@ -2,6 +2,8 @@ package com.care.voice.data.history
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import com.care.voice.data.history.ReminderConverters
 import com.care.voice.data.repository.*
 
 @Database(
@@ -16,9 +18,10 @@ import com.care.voice.data.repository.*
         MemoryFactSourceEntity::class,
         MemoryTombstoneEntity::class
     ],
-    version = 1,
+    version = 4,
     exportSchema = false
 )
+@TypeConverters(ReminderConverters::class)
 abstract class AppDb : RoomDatabase() {
     abstract fun messages(): MessagesDao
     abstract fun userProfile(): UserProfileDao

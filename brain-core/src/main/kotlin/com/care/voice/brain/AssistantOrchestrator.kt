@@ -65,6 +65,23 @@ class AssistantOrchestrator(
         }
     }
 
+    suspend fun retryPendingReminderSchedule(pendingActionId: String): AssistantResult {
+        val pending = pendingActionRepository.getById(pendingActionId)
+            ?: return AssistantResult.Failure(
+                error = AssistantError.InvalidReminder,
+                userMessage = "Не удалось найти напоминание для повторной постановки."
+            )
+        if (pending.type != PendingActionType.CREATE_REMINDER ||
+            pending.state != PendingActionState.WAITING_CONFIRMATION
+        ) {
+            return AssistantResult.Failure(
+                error = AssistantError.InvalidReminder,
+                userMessage = "Напоминание уже обработано."
+            )
+        }
+        return confirmPending("", pending)
+    }
+
     private suspend fun handleUserMessage(text: String): AssistantResult {
         if (text.isBlank()) {
             return AssistantResult.Failure(
@@ -181,15 +198,29 @@ class AssistantOrchestrator(
             PendingActionType.CREATE_REMINDER -> {
                 val schedule = PendingActionCodec.decodeReminder(pending.payload)
                     ?: return AssistantResult.Failure(AssistantError.InvalidReminder, "Неизвестное действие.")
-                pendingActionRepository.updateState(pending.id, PendingActionState.COMPLETED)
                 val result = reminderCoordinator.executeConfirmed(schedule, reminderScheduler)
-                if (result is AssistantResult.ActionCompleted && userText.isNotBlank()) {
-                    saveUserMessage(sessionId, userText)
-                    saveAssistantMessage(sessionId, result.text)
-                } else if (result is AssistantResult.Failure && userText.isNotBlank()) {
-                    pendingActionRepository.updateState(pending.id, PendingActionState.WAITING_CONFIRMATION)
-                    saveUserMessage(sessionId, userText)
-                    saveAssistantMessage(sessionId, result.userMessage)
+                when (result) {
+                    is AssistantResult.ActionCompleted -> {
+                        pendingActionRepository.updateState(pending.id, PendingActionState.COMPLETED)
+                        if (userText.isNotBlank()) {
+                            saveUserMessage(sessionId, userText)
+                            saveAssistantMessage(sessionId, result.text)
+                        }
+                    }
+                    is AssistantResult.ReminderSetupRequired -> {
+                        if (userText.isNotBlank()) {
+                            saveUserMessage(sessionId, userText)
+                            saveAssistantMessage(sessionId, result.userMessage)
+                        }
+                        return result.copy(pendingActionId = pending.id)
+                    }
+                    is AssistantResult.Failure -> {
+                        if (userText.isNotBlank()) {
+                            saveUserMessage(sessionId, userText)
+                            saveAssistantMessage(sessionId, result.userMessage)
+                        }
+                    }
+                    else -> Unit
                 }
                 result
             }

@@ -9,6 +9,7 @@ sealed interface ReminderPendingCommand {
         val triggerAtEpochMillis: Long,
         val isRepeating: Boolean,
         val repeatIntervalMillis: Long?,
-        val humanReadableTime: String
+        val humanReadableTime: String,
+        val precision: com.care.voice.brain.reminder.ReminderPrecision
     ) : ReminderPendingCommand
 }

@@ -9,7 +9,7 @@ import com.care.voice.brain.reminder.ReminderIntentResolver
 import com.care.voice.brain.summary.ConversationSummarizer
 import com.care.voice.data.history.ChatHistoryRepository
 import com.care.voice.data.net.LlmApi
-import com.care.voice.data.reminder.ReminderScheduler
+import com.care.voice.data.reminder.AlarmReminderScheduler
 import com.care.voice.platform.android.llm.GroqLanguageModel
 import com.care.voice.platform.android.persistence.RoomConversationRepository
 import com.care.voice.platform.android.persistence.RoomMemoryRepository
@@ -17,8 +17,9 @@ import com.care.voice.platform.android.persistence.RoomMemoryStore
 import com.care.voice.platform.android.persistence.RoomPendingActionRepository
 import com.care.voice.platform.android.persistence.RoomSummaryRepository
 import com.care.voice.platform.android.persistence.YasnaDatabase
+import com.care.voice.platform.android.reminder.AndroidReminderCapabilityChecker
 import com.care.voice.platform.android.reminder.AndroidReminderScheduler
-import com.care.voice.platform.android.reminder.ReminderRuntime
+import com.care.voice.platform.android.reminder.ReminderDependencies
 import com.care.voice.platform.android.memory.MemoryConsolidationScheduler
 import com.care.voice.platform.android.session.RoomSessionManager
 import com.care.voice.platform.tts.TtsManager
@@ -46,15 +47,19 @@ object ServiceLocator {
     val recognition by lazy { RecognitionManager(appContext) }
     val tts by lazy { TtsManager(appContext, Locale.forLanguageTag("ru-RU")) }
 
+    val reminderCapabilityChecker by lazy { AndroidReminderCapabilityChecker(appContext) }
+
     val assistantOrchestrator by lazy {
-        val db = YasnaDatabase.create(appContext)
+        val db = YasnaDatabase.get(appContext)
         val historyRepo = ChatHistoryRepository(db.messages())
         val userProfileDao = db.userProfile()
         val summaryDao = db.chatSummaryDao()
         val reminderDao = db.reminders()
-        val alarmScheduler = ReminderScheduler(appContext)
+        val alarmScheduler = AlarmReminderScheduler(appContext) {
+            reminderCapabilityChecker.canScheduleExactAlarms()
+        }
 
-        ReminderRuntime.initialize(reminderDao, alarmScheduler)
+        ReminderDependencies.get(appContext)
 
         val languageModel = GroqLanguageModel(
             api = LlmApi.groq(BuildConfig.GROQ_API_KEY),
@@ -66,7 +71,11 @@ object ServiceLocator {
         val summaryRepository = RoomSummaryRepository(summaryDao)
         val pendingActionRepository = RoomPendingActionRepository(db.pendingActions())
         val sessionManager = RoomSessionManager(db.conversationSessions())
-        val reminderScheduler = AndroidReminderScheduler(reminderDao, alarmScheduler)
+        val reminderScheduler = AndroidReminderScheduler(
+            reminderDao = reminderDao,
+            alarmScheduler = alarmScheduler,
+            capabilityChecker = reminderCapabilityChecker
+        )
 
         val memoryPipeline = MemoryPipeline(
             extractor = GroqMemoryExtractor(languageModel),
@@ -94,5 +103,16 @@ object ServiceLocator {
 
     fun wirePlatformRuntime() {
         assistantOrchestrator
+        ReminderDependencies.get(appContext)
+    }
+
+    suspend fun reconcileReminders() {
+        ReminderDependencies.get(appContext).reconciler.reconcile()
+    }
+
+    fun rescheduleRemindersAfterPermissionGrant() {
+        kotlinx.coroutines.runBlocking {
+            ReminderDependencies.get(appContext).reconciler.reconcile()
+        }
     }
 }
