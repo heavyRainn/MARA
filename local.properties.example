@@ -1,3 +1,5 @@
 # Copy to local.properties and set your Groq API key.
 # local.properties is gitignored and must not be committed.
-groq.api.key=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
+#
+# sdk.dir=C\:\\Users\\YourName\\AppData\\Local\\Android\\Sdk
+groq.api.key=gsk_your_key_here

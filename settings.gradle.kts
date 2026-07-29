@@ -28,4 +28,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "yasna"
-include(":app", ":brain-core", ":platform-android")
+include(":app", ":brain-core", ":platform-android", ":piper-spike")

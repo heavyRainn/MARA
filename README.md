@@ -1,8 +1,8 @@
 # Yasna
 
-**Yasna** — русскоязычный голосовой ассистент для пожилых людей. Приложение работает локально на Android: распознаёт речь, отвечает голосом, запоминает важные сведения о пользователе, создаёт напоминания и учитывает медицинские ограничения при сохранении памяти.
+**Yasna** — русскоязычный голосовой ассистент для пожилых людей на Android: распознаёт речь, отвечает голосом, запоминает важные сведения о пользователе, создаёт напоминания и учитывает медицинские ограничения при сохранении памяти.
 
-Проект находится в активной разработке. Текущая версия включает **Memory v2** — атомарную долговременную память с подтверждением чувствительных фактов.
+Проект в активной разработке. Текущая версия включает **Memory v2** (атомарная долговременная память) и **локальный neural TTS** (Piper / sherpa-onnx, голос Irina).
 
 ---
 
@@ -10,113 +10,74 @@
 
 | Модуль | Назначение |
 |--------|------------|
-| `:app` | Compose UI, `SpeakViewModel`, `ServiceLocator`, lifecycle |
-| `:brain-core` | Чистый Kotlin/JVM: orchestrator, память, напоминания, LLM-контракты |
-| `:platform-android` | Room, Retrofit/Groq, SpeechRecognizer, TTS, AlarmManager, WorkManager |
+| `:app` | Compose UI, `SpeakViewModel`, FSM голоса, `ServiceLocator` |
+| `:brain-core` | Чистый Kotlin/JVM: orchestrator, память, напоминания, speech API, LLM-контракты |
+| `:platform-android` | Room, Groq, SpeechRecognizer, Piper runtime, AlarmManager, WorkManager |
+| `:piper-spike` | Native libs sherpa-onnx + vendored JNI bindings + assets голосовой модели |
 
-**Граница:** `:brain-core` не зависит от Android SDK, Room или Retrofit. Все платформенные детали — в `:platform-android`.
+**Граница:** `:brain-core` не зависит от Android SDK. Платформенные детали — в `:platform-android` и `:piper-spike`.
 
 ---
 
-## Предметная область
+## Основные возможности
 
-### Пользователь
-Пожилой человек, которому нужен простой голосовой собеседник: без сложного UI, с медленной речью, короткими ответами и запоминанием личных предпочтений.
-
-### Основные возможности
-
-1. **Голосовой диалог** — нажатие на микрофон, распознавание речи (ru-RU), ответ через TTS.
-2. **Долговременная память** — факты о пользователе (имя, предпочтения, локация, лекарства и т.д.) с provenance и политиками безопасности.
-3. **Напоминания** — «напомни завтра в 9 выпить таблетку» с подтверждением перед постановкой будильника.
-4. **Команды памяти** — «что ты обо мне помнишь?», «забудь, что я люблю кофе», «не запоминай этот разговор».
+1. **Голосовой диалог** — микрофон, распознавание ru-RU, ответ через Groq LLM, озвучка ответа.
+2. **Локальный TTS** — Piper (Irina, `ru_RU-irina-medium`) через sherpa-onnx; fallback на Android TTS.
+3. **Долговременная память** — факты о пользователе с provenance и политиками безопасности.
+4. **Напоминания** — «напомни завтра в 9…» с подтверждением; уведомление + голос при срабатывании.
+5. **Команды памяти** — «что ты обо мне помнишь?», «забудь…», «не запоминай этот разговор».
 
 ### Принципы домена
 
 - Текущее сообщение пользователя **важнее** сохранённой памяти.
-- Медицинские факты (лекарства, аллергии, диагнозы) **не сохраняются без явного «да»**.
-- Память из ответов ассистента, цитат и гипотез **не извлекается**.
-- Удалённая пользователем память **не восстанавливается** автоматически (tombstones).
-- Local-first: данные на устройстве, Groq используется только для генерации ответов и extraction.
+- Медицинские факты **не сохраняются без явного «да»**.
+- Память из ответов ассистента **не извлекается**.
+- Удалённая память **не восстанавливается** автоматически (tombstones).
+- Local-first: данные на устройстве; Groq — только для LLM (ответы, extraction, intent напоминаний).
 
 ---
 
 ## Архитектура
 
-### Центральный orchestrator
+### Orchestrator
 
-`AssistantOrchestrator` (`:brain-core`) координирует все сценарии:
+`AssistantOrchestrator` координирует диалог, pending actions (подтверждения), напоминания и memory pipeline.
+
+### Speech pipeline
 
 ```
-UserMessage / Confirmation
-        │
-        ▼
-  SessionManager ──► sessionId (новая сессия: 8ч простоя / новый день)
-        │
-        ├── PendingActionRepository (Room) ── reminder / memory confirm
-        ├── ReminderIntentResolver ──► ReminderCoordinator
-        └── Chat flow:
-              ContextBuilder + MemoryRetriever
-              LanguageModel (Groq)
-              ConversationRepository
-              MemoryPipeline
-              ConversationSummarizer
+SpeakViewModel → TtsManager
+  → AssistantSpeechCoordinator / ReminderSpeechCoordinator
+  → SpeechPlaybackCoordinator (normalize, chunk)
+  → FallbackSpeechSynthesisProvider
+      → PiperSpeechProvider (sherpa-onnx)
+      → AndroidSpeechProvider (fallback)
 ```
 
-### Memory v2 pipeline
+Модель Irina предзагружается в фоне при старте приложения.
+
+### Memory v2
 
 ```
 Extract → Validate → Resolve → Confirm → Store → Retrieve → Consolidate
 ```
 
-| Этап | Компонент | Описание |
-|------|-----------|----------|
-| Extract | `GroqMemoryExtractor` | LLM возвращает JSON-кандидатов `MemoryCandidate` |
-| Validate | `MemoryPolicy` | Rule-based: auto / confirm / reject |
-| Resolve | `MemoryConflictResolver` | ADD / UPDATE / DELETE / NOOP, SUPERSEDED |
-| Confirm | `PendingAction(CONFIRM_MEMORY)` | TTL 48ч, переживает process kill |
-| Store | `MemoryRepository` + Room | Факты + sources в транзакции |
-| Retrieve | `MemoryRetriever` | Topic + keyword ranking, лимиты в prompt |
-| Consolidate | `DefaultMemoryConsolidator` + WorkManager | Expiry, дедупликация, rebuild `UserProfile` |
+| Этап | Компонент |
+|------|-----------|
+| Extract | `GroqMemoryExtractor` |
+| Validate | `MemoryPolicy` |
+| Resolve | `MemoryConflictResolver` |
+| Confirm | `PendingAction(CONFIRM_MEMORY)` |
+| Store | Room (`memory_facts`, sources) |
+| Retrieve | `MemoryRetriever` |
+| Consolidate | WorkManager + `DefaultMemoryConsolidator` |
 
-`UserProfile` — **проекция** над активными фактами (`UserProfileProjector`), не источник истины.
+### Напоминания
 
-### Контекст для LLM
-
-`ContextBuilder` формирует сообщения в порядке:
-
-1. System prompt + правила безопасности памяти
-2. Релевантные подтверждённые факты (до ~8 профильных + ~3 эпизодических)
-3. Summary текущей сессии
-4. Последние активные сообщения (tail = 8)
-5. Текущая реплика пользователя
-
-Полный профиль **не** отправляется при каждом запросе.
-
----
-
-## Хранение данных (Room v1)
-
-База `yasna.db`, **версия 1** — единая схема без миграций. При изменении схемы используется `fallbackToDestructiveMigration()` (данные сбрасываются). Подходит для ранней разработки; перед релизом потребуются явные migrations.
-
-### Таблицы
-
-| Таблица | Содержимое |
-|---------|------------|
-| `messages` | История чата: `message_uid`, `role`, `content`, `state` (ACTIVE/ARCHIVED/DELETED) |
-| `conversation_sessions` | Сессии, `exclude_from_extraction` |
-| `chat_summaries` | Резюме сессии |
-| `user_profile` | Кэш-проекция профиля |
-| `memory_facts` | Атомарные факты памяти |
-| `memory_fact_sources` | Provenance (messageId, sourceType, excerpt) |
-| `memory_tombstones` | Запрет восстановления забытых фактов |
-| `pending_actions` | Ожидающие подтверждения (reminder, memory) |
-| `reminders` | Запланированные напоминания |
-
-### Сообщения
-
-- В LLM попадают только **ACTIVE** сообщения (последние 8).
-- После summary старые сообщения **архивируются**, не удаляются.
-- Архив доступен для provenance и summarization.
+```
+ReminderIntentResolver (LLM) → ReminderCoordinator → подтверждение
+  → AlarmManager → ReminderReceiver → notification + voice
+```
 
 ---
 
@@ -127,76 +88,86 @@ Extract → Validate → Resolve → Confirm → Store → Retrieve → Consolid
 - Android Studio (AGP 8.4+, compileSdk 36)
 - JDK 11+
 - Groq API key
+- **Устройство arm64** (Piper JNI собран для `arm64-v8a`)
+- Windows: PowerShell для автозагрузки Piper-assets при сборке
 
 ### Настройка
 
 1. Скопируйте `local.properties.example` → `local.properties`
 2. Укажите ключ: `groq.api.key=gsk_...`
-3. Сборка:
+3. Сборка (assets Piper скачаются автоматически):
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
+Ручная загрузка модели (опционально):
+
+```powershell
+powershell -File scripts/download-piper-spike.ps1
+```
+
 4. Тесты:
 
 ```bash
-./gradlew :brain-core:test :platform-android:testDebugUnitTest
+./gradlew :brain-core:test :platform-android:testDebugUnitTest :app:testDebugUnitTest
 ```
 
 ### Разрешения
 
-- `RECORD_AUDIO` — распознавание речи
-- `INTERNET` — Groq API
+| Разрешение | Зачем |
+|------------|-------|
+| `RECORD_AUDIO` | Распознавание речи |
+| `INTERNET` | Groq API |
+| `POST_NOTIFICATIONS` | Push-напоминания |
+| `SCHEDULE_EXACT_ALARM` | Точные будильники |
+| `RECEIVE_BOOT_COMPLETED` | Восстановление напоминаний после перезагрузки |
 
 ---
 
-## Ключевые package names
+## Хранение данных
+
+Room-база `yasna.db`. При изменении схемы — `fallbackToDestructiveMigration()` (данные сбрасываются). Перед релизом нужны явные migrations.
+
+Основные таблицы: `messages`, `conversation_sessions`, `chat_summaries`, `memory_facts`, `memory_tombstones`, `pending_actions`, `reminders`.
+
+---
+
+## Структура пакетов
 
 ```
 com.care.voice                    — app (UI, ServiceLocator)
-com.care.voice.brain              — brain-core (orchestrator, memory, reminder)
-com.care.voice.brain.memory.*     — Memory v2 domain
-com.care.voice.brain.pending.*    — Pending actions
-com.care.voice.platform.android.* — Room, Groq, workers
-com.care.voice.data.*             — entities, DAO, repositories
+com.care.voice.brain              — orchestrator, memory, reminder, speech
+com.care.voice.platform.android.* — Room, Groq, Piper, workers, receivers
+com.care.voice.data.*             — entities, DAO
+com.k2fsa.sherpa.onnx             — vendored JNI bindings (piper-spike)
 ```
 
 ---
 
-## Тестирование
+## Лицензии сторонних компонентов
 
-Unit-тесты в `:brain-core`:
-
-- `MemoryPolicyTest`, `MemoryCandidateParserTest`
-- `MemoryConflictResolverTest`, `MemoryRetrieverTest`
-- `MemoryPipelineTest`, `DefaultMemoryConsolidatorTest`
-- `AssistantOrchestratorTest`, `ContextBuilderTest`
-
-Unit-тесты в `:platform-android`:
-
-- `MemoryMappersTest`, `ReminderTimeParserTest`
+См. [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — sherpa-onnx, Piper, голосовые модели.
 
 ---
 
 ## Текущие ограничения
 
-- Room v1 + destructive migration — **не для production** без migrations.
-- Retrieval без embeddings (keyword + topic classification).
-- `ProfileExtractor` устарел; используется `MemoryPipeline`.
-- Groq model: `llama-3.1-8b-instant`.
+- Room + destructive migration — не для production без migrations.
+- Retrieval без embeddings (keyword + topic).
+- Groq model: `llama-3.1-8b-instant`; без интернета LLM недоступен.
+- Piper только **arm64-v8a**; на x86-эмуляторе — fallback Android TTS.
 - Нет экрана управления памятью для опекунов.
-- Instrumented-тест миграции не написан (миграции пока отключены).
+- Dataset license голоса Irina: Unknown (см. THIRD_PARTY_NOTICES).
 
 ---
 
 ## Дорожная карта
 
-1. Стабильные Room migrations при заморозке схемы.
-2. Расширение unit-тестов до полного набора сценариев Memory v2.
-3. Экран просмотра/удаления памяти.
-4. Embeddings — только после накопления достаточного объёма фактов и метрик качества retrieval.
-5. Release-safe logging (медицинские данные не в логах).
+1. Стабильные Room migrations.
+2. Экран просмотра/удаления памяти.
+3. Embeddings для retrieval — после накопления метрик.
+4. Release-safe logging (медицинские данные не в логах).
 
 ---
 

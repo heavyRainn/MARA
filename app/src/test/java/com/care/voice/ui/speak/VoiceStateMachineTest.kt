@@ -30,8 +30,10 @@ class VoiceStateMachineTest {
     }
 
     @Test
-    fun processingMicIsIgnored() {
-        assertNull(VoiceStateMachine.transition(VoiceState.Processing, VoiceEvent.MicPressed))
+    fun processingMicCancelsToIdle() {
+        val t = VoiceStateMachine.transition(VoiceState.Processing, VoiceEvent.MicPressed)
+        assertEquals(VoiceState.Idle, t?.to)
+        assertEquals("mic_cancel_processing", t?.reason)
     }
 
     @Test
@@ -66,9 +68,15 @@ class VoiceStateMachineTest {
     }
 
     @Test
-    fun ttsDoneMovesToIdle() {
+    fun ttsDoneMovesToFollowUpWindow() {
         val t = VoiceStateMachine.transition(VoiceState.Speaking, VoiceEvent.TtsDone)
-        assertEquals(VoiceState.Idle, t?.to)
+        assertEquals(VoiceState.FollowUpWindow, t?.to)
+    }
+
+    @Test
+    fun ttsDoneFromProcessingMovesToFollowUpWindow() {
+        val t = VoiceStateMachine.transition(VoiceState.Processing, VoiceEvent.TtsDone)
+        assertEquals(VoiceState.FollowUpWindow, t?.to)
     }
 
     @Test
@@ -105,9 +113,15 @@ class VoiceStateMachineTest {
     }
 
     @Test
-    fun ttsErrorMovesToError() {
+    fun ttsErrorMovesToFollowUpWindowFromSpeaking() {
         val t = VoiceStateMachine.transition(VoiceState.Speaking, VoiceEvent.TtsError)
-        assertEquals(VoiceState.Error, t?.to)
+        assertEquals(VoiceState.FollowUpWindow, t?.to)
+    }
+
+    @Test
+    fun ttsErrorMovesToFollowUpWindowFromProcessing() {
+        val t = VoiceStateMachine.transition(VoiceState.Processing, VoiceEvent.TtsError)
+        assertEquals(VoiceState.FollowUpWindow, t?.to)
     }
 
     @Test

@@ -97,19 +97,19 @@ object VoiceStateMachine {
         }
 
         VoiceEvent.TtsDone -> when (state) {
-            VoiceState.Speaking ->
-                VoiceTransition(state, VoiceState.Idle, "tts_done")
+            VoiceState.Speaking, VoiceState.Processing ->
+                VoiceTransition(state, VoiceState.FollowUpWindow, "tts_done")
             else -> null
         }
 
         VoiceEvent.TtsError -> when (state) {
             VoiceState.Processing, VoiceState.Speaking ->
-                VoiceTransition(state, VoiceState.Error, "tts_error")
+                VoiceTransition(state, VoiceState.FollowUpWindow, "tts_error")
             else -> null
         }
 
         VoiceEvent.TtsStopped -> when (state) {
-            VoiceState.Speaking ->
+            VoiceState.Speaking, VoiceState.Processing ->
                 VoiceTransition(state, VoiceState.Idle, "tts_stopped")
             else -> null
         }
@@ -128,7 +128,8 @@ object VoiceStateMachine {
             VoiceTransition(state, VoiceState.Idle, "mic_cancel_listening")
         VoiceState.Speaking ->
             VoiceTransition(state, VoiceState.Idle, "mic_stop_speaking")
-        VoiceState.Processing -> null
+        VoiceState.Processing ->
+            VoiceTransition(state, VoiceState.Idle, "mic_cancel_processing")
         VoiceState.FollowUpWindow ->
             VoiceTransition(state, VoiceState.StartingListening, "mic_follow_up")
     }

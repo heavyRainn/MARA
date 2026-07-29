@@ -133,6 +133,7 @@ class ReminderReconcilerTest {
         policy = VoiceReminderPolicy(
             settings = object : com.care.voice.brain.reminder.VoiceReminderSettings {
                 override val voiceRemindersEnabled = true
+                override val quietHoursEnabled = false
                 override val quietHoursStartHour = 22
                 override val quietHoursEndHour = 8
             },

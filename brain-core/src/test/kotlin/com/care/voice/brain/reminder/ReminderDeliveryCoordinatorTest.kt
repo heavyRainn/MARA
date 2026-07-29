@@ -267,6 +267,7 @@ private class FakePersistence(
 
 private class FakeSettings(
     override val voiceRemindersEnabled: Boolean = true,
+    override val quietHoursEnabled: Boolean = true,
     override val quietHoursStartHour: Int = 22,
     override val quietHoursEndHour: Int = 8
 ) : VoiceReminderSettings

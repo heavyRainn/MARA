@@ -28,6 +28,7 @@ android {
 
 dependencies {
     api(project(":brain-core"))
+    implementation(project(":piper-spike"))
 
     implementation(libs.androidx.core.ktx)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

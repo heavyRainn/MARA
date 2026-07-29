@@ -2,6 +2,7 @@ package com.care.voice.brain.reminder
 
 interface VoiceReminderSettings {
     val voiceRemindersEnabled: Boolean
+    val quietHoursEnabled: Boolean
     val quietHoursStartHour: Int
     val quietHoursEndHour: Int
 }
@@ -30,7 +31,7 @@ class VoiceReminderPolicy(
         if (text.isBlank()) {
             return VoicePolicyDecision.Skip(VoiceSkipReason.EMPTY_TEXT)
         }
-        if (isQuietHours(clock.currentLocalHour())) {
+        if (settings.quietHoursEnabled && isQuietHours(clock.currentLocalHour())) {
             return VoicePolicyDecision.Skip(VoiceSkipReason.QUIET_HOURS)
         }
         if (callState.isPhoneCallActive()) {

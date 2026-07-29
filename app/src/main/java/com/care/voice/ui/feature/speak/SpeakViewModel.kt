@@ -24,6 +24,8 @@ import java.util.Locale
 private val RU_LOCALE: Locale = Locale.forLanguageTag("ru-RU")
 private const val LISTENING_START_TIMEOUT_MS = 8_000L
 private const val TRANSIENT_HINT_MS = 3_000L
+private const val FOLLOW_UP_TIMEOUT_MS = 8_000L
+private const val SPEECH_TIMEOUT_MS = 60_000L
 
 data class SpeakUiState(
     val voiceState: VoiceState = VoiceState.Idle,
@@ -48,6 +50,7 @@ class SpeakViewModel : ViewModel() {
     private var followUpJob: Job? = null
     private var listenStartTimeoutJob: Job? = null
     private var transientHintJob: Job? = null
+    private var speechTimeoutJob: Job? = null
     private var sessionToken = 0L
     private var activeListenToken = 0L
     private var finalHandledForToken = 0L
@@ -107,6 +110,11 @@ class SpeakViewModel : ViewModel() {
             "mic_stop_speaking" -> {
                 applyTransition(transition)
                 stopSpeaking(transition.reason)
+                beginListening(locale, "mic_barge_in")
+            }
+            "mic_cancel_processing" -> {
+                applyTransition(transition)
+                cancelSpeechInProgress(transition.reason)
             }
         }
     }
@@ -356,11 +364,10 @@ class SpeakViewModel : ViewModel() {
         tts.stop()
 
         val uiText = TextSanitizer.forUi(rawAnswer)
-        val ttsText = TextSanitizer.forTts(rawAnswer)
         state.value = state.value.copy(assistantText = uiText, error = null)
         dispatch(VoiceEvent.AssistantReplyReady(uiText), "assistant_reply")
         prepareForTts("assistant_reply")
-        speakTts(ttsText, "assistant_reply")
+        speakTts(TextSanitizer.forTts(rawAnswer), "assistant_reply")
     }
 
     private fun prepareForTts(reason: String) {
@@ -378,6 +385,9 @@ class SpeakViewModel : ViewModel() {
 
         YasnaSpeechLog.d("speakTts reason=$reason utteranceId=$utteranceId sessionToken=$sessionToken")
 
+        dispatch(VoiceEvent.TtsStarted, "tts_requested")
+        startSpeechTimeout(utteranceId)
+
         tts.speak(
             text = text,
             utteranceId = utteranceId,
@@ -388,18 +398,59 @@ class SpeakViewModel : ViewModel() {
                 },
                 onDone = {
                     if (ttsUtteranceId != utteranceId) return@TtsCallbacks
-                    ttsUtteranceId = null
-                    dispatch(VoiceEvent.TtsDone, "tts_on_done")
+                    finishSpeechCycle(utteranceId, VoiceEvent.TtsDone, "tts_on_done")
                 },
                 onError = {
                     if (ttsUtteranceId != utteranceId) return@TtsCallbacks
-                    ttsUtteranceId = null
-                    val message = state.value.assistantText.ifBlank { "Не удалось озвучить ответ." }
-                    state.value = state.value.copy(error = message)
-                    dispatch(VoiceEvent.TtsError, "tts_on_error")
+                    finishSpeechCycle(utteranceId, VoiceEvent.TtsError, "tts_on_error")
                 }
             )
         )
+    }
+
+    private fun finishSpeechCycle(utteranceId: String, event: VoiceEvent, reason: String) {
+        if (ttsUtteranceId != utteranceId) return
+        ttsUtteranceId = null
+        cancelSpeechTimeout()
+        dispatch(event, reason)
+        startFollowUpWindow()
+    }
+
+    private fun cancelSpeechInProgress(reason: String) {
+        ttsUtteranceId = null
+        cancelSpeechTimeout()
+        tts.stop()
+        endFollowUpWindow()
+        ensureRecognizerStopped(reason)
+    }
+
+    private fun startSpeechTimeout(utteranceId: String) {
+        cancelSpeechTimeout()
+        speechTimeoutJob = viewModelScope.launch {
+            delay(SPEECH_TIMEOUT_MS)
+            if (ttsUtteranceId != utteranceId) return@launch
+            val voiceState = state.value.voiceState
+            if (voiceState != VoiceState.Processing && voiceState != VoiceState.Speaking) return@launch
+            YasnaSpeechLog.w("speech timeout utteranceId=$utteranceId sessionToken=$sessionToken")
+            finishSpeechCycle(utteranceId, VoiceEvent.TtsError, "speech_timeout")
+        }
+    }
+
+    private fun cancelSpeechTimeout() {
+        speechTimeoutJob?.cancel()
+        speechTimeoutJob = null
+    }
+
+    private fun startFollowUpWindow() {
+        followUpActive = true
+        cancelFollowUpTimer()
+        followUpJob = viewModelScope.launch {
+            delay(FOLLOW_UP_TIMEOUT_MS)
+            if (state.value.voiceState == VoiceState.FollowUpWindow) {
+                dispatch(VoiceEvent.FollowUpTimeout, "follow_up_timeout")
+                followUpActive = false
+            }
+        }
     }
 
     private fun endFollowUpWindow() {
@@ -409,6 +460,7 @@ class SpeakViewModel : ViewModel() {
 
     private fun stopSpeaking(reason: String) {
         ttsUtteranceId = null
+        cancelSpeechTimeout()
         tts.stop()
         endFollowUpWindow()
         ensureRecognizerStopped(reason)
@@ -463,6 +515,7 @@ class SpeakViewModel : ViewModel() {
 
     override fun onCleared() {
         cancelListenStartTimeout()
+        cancelSpeechTimeout()
         clearTransientHint()
         endFollowUpWindow()
         assistantJob?.cancel()

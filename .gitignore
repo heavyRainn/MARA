@@ -1,21 +1,32 @@
+# Gradle / Android Studio
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
+.gradle/
+.kotlin/
+build/
 **/build/
-/captures
-.externalNativeBuild
-.cxx
 local.properties
-.idea
-/.idea/
-.vscode
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Native / NDK
+.externalNativeBuild/
+.cxx/
+/captures
+
+# JVM (legacy brain-core output)
 brain-core/bin/
-build
+
+# APK / bundles
+*.apk
+*.aab
+
+# Profiling
+*.hprof
+
+# Piper runtime assets (downloaded on build via scripts/download-piper-spike.ps1)
+piper-spike/src/main/jniLibs/
+piper-spike/src/main/assets/piper/
+.gradle/piper-spike-cache/

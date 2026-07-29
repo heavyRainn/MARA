@@ -15,11 +15,9 @@ import com.care.voice.data.repository.ReminderDao
 import com.care.voice.brain.reminder.ReminderDeliveryCoordinator
 import com.care.voice.brain.reminder.ReminderVoiceStateStore
 import com.care.voice.brain.reminder.VoiceReminderPolicy
-import com.care.voice.platform.android.reminder.voice.AndroidAudioFocusController
 import com.care.voice.platform.android.reminder.voice.AndroidCallStateProvider
-import com.care.voice.platform.android.reminder.voice.AndroidReminderSpeechProvider
+import com.care.voice.platform.android.speech.YasnaSpeechHolder
 import com.care.voice.platform.android.reminder.voice.DefaultVoiceReminderSettings
-import com.care.voice.platform.android.reminder.voice.PlatformAndroidTtsEngine
 import com.care.voice.platform.android.reminder.voice.SystemClockAdapter
 import com.care.voice.platform.android.persistence.YasnaDatabase
 
@@ -166,10 +164,7 @@ object ReminderDependencies {
         val rescheduler = ReminderRescheduler(dao, alarmScheduler, { System.currentTimeMillis() })
         val voiceStateStore = RoomReminderVoiceStateStore(dao)
         val deliveryPersistence = RoomReminderDeliveryPersistence(dao)
-        val speechProvider = AndroidReminderSpeechProvider(
-            ttsEngine = PlatformAndroidTtsEngine(context),
-            audioFocus = AndroidAudioFocusController(context)
-        )
+        val speechProvider = YasnaSpeechHolder.get(context).reminderCoordinator
         val policy = VoiceReminderPolicy(
             settings = DefaultVoiceReminderSettings(),
             clock = SystemClockAdapter(),

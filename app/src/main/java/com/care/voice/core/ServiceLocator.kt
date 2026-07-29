@@ -22,9 +22,9 @@ import com.care.voice.platform.android.reminder.AndroidReminderScheduler
 import com.care.voice.platform.android.reminder.ReminderDependencies
 import com.care.voice.platform.android.memory.MemoryConsolidationScheduler
 import com.care.voice.platform.android.session.RoomSessionManager
+import com.care.voice.platform.android.speech.YasnaSpeechHolder
 import com.care.voice.platform.tts.TtsManager
 import com.care.voice.platform.voice.RecognitionManager
-import java.util.Locale
 
 object ServiceLocator {
     lateinit var app: Application
@@ -45,7 +45,10 @@ object ServiceLocator {
     }
 
     val recognition by lazy { RecognitionManager(appContext) }
-    val tts by lazy { TtsManager(appContext, Locale.forLanguageTag("ru-RU")) }
+
+    val speech by lazy { YasnaSpeechHolder.get(appContext) }
+
+    val tts by lazy { TtsManager(speech.assistantCoordinator) }
 
     val reminderCapabilityChecker by lazy { AndroidReminderCapabilityChecker(appContext) }
 
@@ -104,6 +107,7 @@ object ServiceLocator {
     fun wirePlatformRuntime() {
         assistantOrchestrator
         ReminderDependencies.get(appContext)
+        YasnaSpeechHolder.preloadVoiceModel(appContext)
     }
 
     suspend fun reconcileReminders() {
