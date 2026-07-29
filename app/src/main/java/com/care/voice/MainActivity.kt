@@ -7,7 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
 import com.care.voice.core.ServiceLocator
-import com.care.voice.ui.feature.speak.SpeakScreen
+import com.care.voice.ui.YasnaMainScreen
 import com.care.voice.ui.reminder.ReminderPermissionEffects
 import com.care.voice.ui.speak.SpeakViewModel
 import com.care.voice.ui.theme.YasnaTheme
@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             YasnaTheme {
                 ReminderPermissionEffects(speakViewModel)
-                Surface { SpeakScreen(speakViewModel) }
+                Surface { YasnaMainScreen(speakViewModel) }
             }
         }
     }

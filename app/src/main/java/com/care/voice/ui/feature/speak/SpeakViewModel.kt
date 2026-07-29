@@ -2,14 +2,22 @@ package com.care.voice.ui.speak
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.care.voice.brain.AssistantInput
 import com.care.voice.brain.AssistantResult
 import com.care.voice.brain.ReminderSetupKind
+import com.care.voice.brain.vision.VisionImage
+import com.care.voice.brain.vision.VisionRequest
+import com.care.voice.brain.vision.VisionResult
+import com.care.voice.brain.vision.VisionSubmitGuard
+import com.care.voice.brain.vision.VisionUiState
 import com.care.voice.brain.util.TextSanitizer
 import com.care.voice.core.ServiceLocator
+import com.care.voice.ui.feature.photo.PhotoCommandMatcher
+import com.care.voice.platform.android.vision.PreprocessResult
 import com.care.voice.platform.tts.TtsCallbacks
 import com.care.voice.platform.voice.RecognitionErrorKind
 import com.care.voice.platform.voice.RecognitionEvent
@@ -31,8 +39,11 @@ data class SpeakUiState(
     val voiceState: VoiceState = VoiceState.Idle,
     val finalText: String = "",
     val assistantText: String = "",
+    val attachedPhotoUri: Uri? = null,
+    val pendingPhotoUri: Uri? = null,
     val error: String? = null,
     val transientHint: String? = null,
+    val visionState: VisionUiState = VisionUiState.Idle,
     val rms: Float = 0f,
     val sessionToken: Long = 0L
 )
@@ -47,6 +58,7 @@ class SpeakViewModel : ViewModel() {
 
     private var listenJob: Job? = null
     private var assistantJob: Job? = null
+    private var visionJob: Job? = null
     private var followUpJob: Job? = null
     private var listenStartTimeoutJob: Job? = null
     private var transientHintJob: Job? = null
@@ -57,9 +69,15 @@ class SpeakViewModel : ViewModel() {
     private var ttsUtteranceId: String? = null
     private var followUpActive = false
     private var activeListenMode = ListenMode.Manual
+    private val visionSubmitGuard = VisionSubmitGuard()
+    private var activeVisionRequestId: String? = null
 
     private val _reminderSetupRequests = MutableSharedFlow<ReminderSetupRequest>(extraBufferCapacity = 1)
     val reminderSetupRequests = _reminderSetupRequests.asSharedFlow()
+    private val _openPhotoPanel = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val openPhotoPanel = _openPhotoPanel.asSharedFlow()
+    private val _navigateToChat = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val navigateToChat = _navigateToChat.asSharedFlow()
     private var pendingExactAlarmRetryId: String? = null
     var pendingNotificationRetryId: String? = null
         private set
@@ -75,6 +93,119 @@ class SpeakViewModel : ViewModel() {
 
     fun clearPendingNotificationRetry() {
         pendingNotificationRetryId = null
+    }
+
+    fun stagePhoto(uri: Uri) {
+        state.value = state.value.copy(pendingPhotoUri = uri, error = null)
+    }
+
+    fun clearStagedPhoto() {
+        state.value = state.value.copy(pendingPhotoUri = null)
+    }
+
+    fun onPhotoMicPressed(locale: Locale = RU_LOCALE) {
+        if (state.value.pendingPhotoUri == null) {
+            showTransientHint("Сначала сделайте или выберите фото")
+            return
+        }
+        onMicPressed(locale)
+    }
+
+    private fun submitPhoto(uri: Uri, question: String) {
+        val trimmedQuestion = question.trim().ifBlank { "Что изображено на фотографии?" }
+        val requestId = "vision-${++sessionToken}"
+
+        if (!visionSubmitGuard.tryBegin(requestId)) {
+            YasnaSpeechLog.d("vision submit ignored active request")
+            return
+        }
+
+        activeVisionRequestId = requestId
+        visionJob?.cancel()
+
+        state.value = state.value.copy(
+            finalText = trimmedQuestion,
+            attachedPhotoUri = uri,
+            pendingPhotoUri = null,
+            error = null,
+            assistantText = "",
+            visionState = VisionUiState.PreparingImage,
+        )
+        if (state.value.voiceState != VoiceState.Processing) {
+            applyTransition(
+                VoiceTransition(state.value.voiceState, VoiceState.Processing, "photo_submit"),
+            )
+        }
+        showTransientHint("Рассматриваю фотографию…")
+        viewModelScope.launch { _navigateToChat.emit(Unit) }
+
+        visionJob = viewModelScope.launch {
+            try {
+                when (val preprocessed = ServiceLocator.imagePreprocessor.preprocess(uri)) {
+                    is PreprocessResult.Failure -> {
+                        if (!visionSubmitGuard.isActive(requestId)) return@launch
+                        handleVisionFailure(preprocessed.userMessage, requestId)
+                        return@launch
+                    }
+                    is PreprocessResult.Success -> {
+                        if (!visionSubmitGuard.isActive(requestId)) return@launch
+                        state.value = state.value.copy(visionState = VisionUiState.Analyzing)
+
+                        val recentTurns = runCatching {
+                            ServiceLocator.visionContextLoader.recentTurns()
+                        }.getOrDefault(emptyList())
+
+                        val image = VisionImage(
+                            jpegBytes = preprocessed.image.jpegBytes,
+                            dataUrl = preprocessed.image.dataUrl,
+                        )
+                        val result = ServiceLocator.visionProvider.analyze(
+                            VisionRequest(
+                                image = image,
+                                question = trimmedQuestion,
+                                recentTurns = recentTurns,
+                            ),
+                        )
+
+                        if (!visionSubmitGuard.isActive(requestId)) return@launch
+
+                        when (result) {
+                            is VisionResult.Success -> {
+                                state.value = state.value.copy(visionState = VisionUiState.Success)
+                                clearTransientHint()
+                                ServiceLocator.visionContextLoader.saveVisionExchange(
+                                    userQuestion = trimmedQuestion,
+                                    assistantAnswer = result.text,
+                                )
+                                deliverAssistantSpeech(result.text)
+                            }
+                            is VisionResult.Failure -> handleVisionFailure(result.userMessage, requestId)
+                        }
+                    }
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                YasnaSpeechLog.d("vision cancelled requestId=$requestId")
+            } finally {
+                visionSubmitGuard.finish(requestId)
+                if (activeVisionRequestId == requestId) {
+                    activeVisionRequestId = null
+                }
+            }
+        }
+    }
+
+    private fun handleVisionFailure(message: String, requestId: String) {
+        if (!visionSubmitGuard.isActive(requestId)) return
+        clearTransientHint()
+        state.value = state.value.copy(
+            visionState = VisionUiState.Error,
+            error = message,
+            assistantText = "",
+        )
+        dispatch(VoiceEvent.AssistantFailed(message), "vision_failure")
+        if (state.value.voiceState == VoiceState.Processing) {
+            applyTransition(VoiceTransition(VoiceState.Processing, VoiceState.Idle, "vision_error"))
+        }
     }
 
     fun onActivityResumed() {
@@ -247,7 +378,22 @@ class SpeakViewModel : ViewModel() {
 
         val userUi = TextSanitizer.forUi(text)
         dispatch(VoiceEvent.RecognitionFinal(text), "final_result")
-        state.value = state.value.copy(finalText = userUi)
+
+        state.value.pendingPhotoUri?.let { photoUri ->
+            state.value = state.value.copy(finalText = userUi)
+            submitPhoto(photoUri, text)
+            return
+        }
+
+        state.value = state.value.copy(finalText = userUi, attachedPhotoUri = null)
+
+        if (PhotoCommandMatcher.matches(text)) {
+            showTransientHint("Откройте панель «Фото» внизу или сделайте снимок")
+            viewModelScope.launch { _openPhotoPanel.emit(Unit) }
+            applyTransition(VoiceTransition(VoiceState.Processing, VoiceState.Idle, "photo_command"))
+            return
+        }
+
         handleAssistant(text)
     }
 
@@ -364,7 +510,11 @@ class SpeakViewModel : ViewModel() {
         tts.stop()
 
         val uiText = TextSanitizer.forUi(rawAnswer)
-        state.value = state.value.copy(assistantText = uiText, error = null)
+        state.value = state.value.copy(
+            assistantText = uiText,
+            error = null,
+            visionState = VisionUiState.Idle,
+        )
         dispatch(VoiceEvent.AssistantReplyReady(uiText), "assistant_reply")
         prepareForTts("assistant_reply")
         speakTts(TextSanitizer.forTts(rawAnswer), "assistant_reply")
@@ -518,9 +668,11 @@ class SpeakViewModel : ViewModel() {
         cancelSpeechTimeout()
         clearTransientHint()
         endFollowUpWindow()
+        visionJob?.cancel()
         assistantJob?.cancel()
         listenJob?.cancel()
         listenJob = null
+        visionSubmitGuard.reset()
         voice.destroy()
         tts.shutdown()
         super.onCleared()

@@ -9,8 +9,12 @@ import com.care.voice.brain.reminder.ReminderIntentResolver
 import com.care.voice.brain.summary.ConversationSummarizer
 import com.care.voice.data.history.ChatHistoryRepository
 import com.care.voice.data.net.LlmApi
+import com.care.voice.data.net.VisionApi
 import com.care.voice.data.reminder.AlarmReminderScheduler
 import com.care.voice.platform.android.llm.GroqLanguageModel
+import com.care.voice.platform.android.vision.GroqVisionProvider
+import com.care.voice.platform.android.vision.ImagePreprocessor
+import com.care.voice.platform.android.vision.VisionContextLoader
 import com.care.voice.platform.android.persistence.RoomConversationRepository
 import com.care.voice.platform.android.persistence.RoomMemoryRepository
 import com.care.voice.platform.android.persistence.RoomMemoryStore
@@ -32,7 +36,9 @@ object ServiceLocator {
 
     private val appContext get() = app.applicationContext
 
-    private const val MODEL = "llama-3.1-8b-instant"
+    const val TEXT_MODEL = "llama-3.1-8b-instant"
+
+    private const val MODEL = TEXT_MODEL
 
     val isGroqConfigured: Boolean
         get() = BuildConfig.GROQ_API_KEY.isNotBlank()
@@ -51,6 +57,26 @@ object ServiceLocator {
     val tts by lazy { TtsManager(speech.assistantCoordinator) }
 
     val reminderCapabilityChecker by lazy { AndroidReminderCapabilityChecker(appContext) }
+
+    private val visionDatabase by lazy { YasnaDatabase.get(appContext) }
+
+    val imagePreprocessor by lazy { ImagePreprocessor(appContext) }
+
+    val visionProvider by lazy {
+        GroqVisionProvider(
+            api = VisionApi.groq(BuildConfig.GROQ_API_KEY),
+            model = GroqVisionProvider.GROQ_VISION_MODEL,
+        )
+    }
+
+    val visionContextLoader by lazy {
+        VisionContextLoader(
+            sessionManager = RoomSessionManager(visionDatabase.conversationSessions()),
+            conversationRepository = RoomConversationRepository(
+                ChatHistoryRepository(visionDatabase.messages()),
+            ),
+        )
+    }
 
     val assistantOrchestrator by lazy {
         val db = YasnaDatabase.get(appContext)

@@ -1,5 +1,6 @@
 package com.care.voice.ui.components
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -36,11 +37,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 
 /* ================= USER ================= */
@@ -48,9 +51,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun UserBubble(
     text: String,
+    photoUri: Uri? = null,
     isFirst: Boolean
 ) {
-    if (text.isBlank()) return
+    if (text.isBlank() && photoUri == null) return
 
     var menuExpanded by remember { mutableStateOf(false) }
     var fontSize by remember { mutableStateOf(15.sp) }
@@ -106,17 +110,32 @@ fun UserBubble(
 
                 Spacer(Modifier.height(6.dp))
 
-                Text(
-                    text = text,
-                    fontSize = fontSize,
-                    lineHeight = (fontSize.value * 1.3f).sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 140.dp)
-                        .verticalScroll(scroll),
-                    maxLines = Int.MAX_VALUE,
-                    overflow = TextOverflow.Visible
-                )
+                photoUri?.let { uri ->
+                    AsyncImage(
+                        model = uri,
+                        contentDescription = "Прикреплённое фото",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                if (text.isNotBlank()) {
+                    Text(
+                        text = text,
+                        fontSize = fontSize,
+                        lineHeight = (fontSize.value * 1.3f).sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 140.dp)
+                            .verticalScroll(scroll),
+                        maxLines = Int.MAX_VALUE,
+                        overflow = TextOverflow.Visible
+                    )
+                }
             }
         }
     }
@@ -220,23 +239,20 @@ fun AssistantBubble(
 
                 Spacer(Modifier.height(6.dp))
 
-                // ─── Контент: растем до доступной высоты, но не тянемся насильно ───
-                Box(
+                Text(
+                    text = text,
+                    fontSize = fontSize,
+                    lineHeight = (fontSize.value * 1.33f).sp,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = false)   // 🔑 подгон по контенту; если много — ограничится доступной высотой
-                        .verticalScroll(scrollState)
-                ) {
-                    Text(
-                        text = text,
-                        fontSize = fontSize,
-                        lineHeight = (fontSize.value * 1.33f).sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                        .heightIn(max = 280.dp)
+                        .verticalScroll(scrollState),
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Visible,
+                )
             }
         }
-        Spacer(Modifier.weight(1f))
     }
 }
 

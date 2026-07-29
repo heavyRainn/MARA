@@ -47,6 +47,7 @@ object RussianSpeechTextNormalizer {
         text = text.replace("\n", " ")
         text = whitespaceRegex.replace(text, " ").trim()
         text = text.replace(Regex("""\s*\u0001\s*"""), " $PARAGRAPH_MARKER ")
+        text = RussianSpeechTtsExpander.expand(text)
         return text.trim()
     }
 }

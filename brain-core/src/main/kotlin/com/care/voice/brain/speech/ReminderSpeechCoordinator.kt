@@ -14,7 +14,7 @@ class ReminderSpeechCoordinator(
             requestId = requestId,
             text = text,
             purpose = SpeechPurpose.REMINDER,
-            playbackMode = SpeechPlaybackMode.QUEUE,
+            playbackMode = SpeechPlaybackMode.REPLACE_CURRENT,
         )
         return when (val result = playbackCoordinator.speak(request)) {
             is SpeechResult.Spoken -> ReminderSpeechResult.Spoken
